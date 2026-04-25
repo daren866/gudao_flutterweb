@@ -1,0 +1,106 @@
+name: Build and Release Flutter Android App (Debug)
+
+on:
+  push:
+    branches: [ "master" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'master'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze project source
+        run: dart analyze || true
+
+      - name: Build Android Debug APK
+        run: flutter build apk --debug
+
+      - name: Get version
+        id: version
+        run: |
+          echo "=== Debug: Checking version ==="
+          # 从 pubspec.yaml 提取版本号
+          if [ -f "pubspec.yaml" ]; then
+            VERSION=$(grep '^version:' pubspec.yaml | head -1 | awk '{print $2}' | cut -d'+' -f1 | tr -d ' ')
+            echo "pubspec.yaml version: '$VERSION'"
+          fi
+          
+          # 如果 pubspec.yaml 没有版本号，使用 tag 名称
+          if [ -z "$VERSION" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              VERSION=${GITHUB_REF#refs/tags/}
+              echo "Using tag: $VERSION"
+            fi
+          fi
+          
+          # 备用方案：使用日期时间
+          if [ -z "$VERSION" ]; then
+            VERSION=$(date +'%Y%m%d-%H%M%S')
+            echo "Using timestamp: $VERSION"
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Final version: $VERSION"
+
+      - name: Rename APK
+        run: |
+          if [ -f "build/app/outputs/flutter-apk/app-debug.apk" ]; then
+            cp build/app/outputs/flutter-apk/app-debug.apk app-debug-${{ steps.version.outputs.version }}.apk
+            echo "✅ APK renamed to: app-debug-${{ steps.version.outputs.version }}.apk"
+          else
+            echo "❌ APK not found!"
+            ls -la build/app/outputs/flutter-apk/ || echo "Directory not found"
+            exit 1
+          fi
+
+      - name: Create Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            app-debug-*.apk
+          name: Android Debug ${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.version }}
+          body: |
+            ## 🚀 Flutter Android Debug APK
+            
+            - **版本**: ${{ steps.version.outputs.version }}
+            - **构建时间**: ${{ github.event.head_commit.timestamp || '手动触发' }}
+            - **构建类型**: Debug
+            
+            > ⚠️ 这是 Debug 版本，仅供测试使用，请勿发布到应用商店
+          draft: false
+          prerelease: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload APK artifact
+        if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-${{ steps.version.outputs.version }}
+          path: app-debug-${{ steps.version.outputs.version }}.apk
