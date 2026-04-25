@@ -425,7 +425,7 @@ class _InputWrapperState extends State<_InputWrapper> {
                   width: 20,
                   height: 20,
                   decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _isChecked ? Colors.blue : Colors.grey, width: 2)),
-                  child: _isChecked ? const Center(child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.blue))) : null,
+                  child: _isChecked ? Center(child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.blue))) : null,
                 ),
                 const SizedBox(width: 8),
                 Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value),
