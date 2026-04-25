@@ -1,0 +1,70 @@
+name: Build and Release Flutter Windows App
+
+on:
+  push:
+    branches: [ "master" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Enable Windows platform
+        run: flutter config --enable-windows-desktop
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Get package info
+        id: package_info
+        shell: bash
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1 | tr -d ' ')
+          if [ -z "$VERSION" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              VERSION=${GITHUB_REF#refs/tags/}
+            else
+              VERSION="${GITHUB_SHA:0:7}"
+            fi
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-app-${{ steps.package_info.outputs.version }}
+          path: build/windows/x64/runner/Release/
+
+      - name: Create Release and Upload
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            build/windows/x64/runner/Release/*
+          name: Release ${{ steps.package_info.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          body: |
+            ## 🚀 自动构建的 Windows 应用
+            
+            - **版本**: ${{ steps.package_info.outputs.version }}
+            - **构建时间**: ${{ github.event.head_commit.timestamp || '手动触发' }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
