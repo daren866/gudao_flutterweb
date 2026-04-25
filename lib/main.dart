@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_html/flutter_html.dart';
-import 'package:url_launcher/url_launcher.dart';  // 导入 url_launcher
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   runApp(const MyApp());
@@ -47,29 +47,25 @@ class _MyHomePageState extends State<MyHomePage> {
     });
 
     try {
-      // 设置最大重定向次数为5次
       final response = await http.get(
         Uri.parse(url),
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
         },
-        // maxRedirects: 5,  // http包默认支持重定向，不需要显式设置
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         setState(() {
           _htmlContent = response.body;
-          _currentUrl = url; // 更新当前URL
+          _currentUrl = url;
         });
       } else if (response.statusCode >= 300 && response.statusCode < 400) {
-        // 处理重定向
         final redirectUrl = response.headers['location'];
         if (redirectUrl != null) {
           setState(() {
             _htmlContent = '重定向到: $redirectUrl';
             _currentUrl = redirectUrl;
           });
-          // 自动跟随重定向
           await _fetchWebContentWithUrl(redirectUrl);
         } else {
           setState(() {
@@ -179,7 +175,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         color: Colors.black87,
                       ),
                     },
-                    onLinkTap: (url, _, __, ___) {
+                    onLinkTap: (url, _, __) {
                       if (url != null) {
                         _launchUrl(url);
                       }
