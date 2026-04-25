@@ -22,11 +22,14 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Enable Windows platform
+      - name: Enable Windows desktop
         run: flutter config --enable-windows-desktop
 
       - name: Install dependencies
         run: flutter pub get
+
+      - name: Analyze project source
+        run: dart analyze
 
       - name: Build Windows
         run: flutter build windows --release
@@ -45,22 +48,15 @@ jobs:
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-app-${{ steps.package_info.outputs.version }}
-          path: build/windows/x64/runner/Release/
-
       - name: Create Release and Upload
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            build/windows/x64/runner/Release/*
+            build/windows/x64/runner/Release/**
           name: Release ${{ steps.package_info.outputs.version }}
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.package_info.outputs.version }}
           body: |
-            ## 🚀 自动构建的 Windows 应用
+            ## 🚀 自动构建的 Flutter Windows 应用
             
             - **版本**: ${{ steps.package_info.outputs.version }}
             - **构建时间**: ${{ github.event.head_commit.timestamp || '手动触发' }}
