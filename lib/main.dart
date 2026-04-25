@@ -37,11 +37,10 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isLoading = false;
   String _currentUrl = '';
 
-  // 统一请求逻辑，支持内部链接自动跳转
   Future<void> _fetchWebContent(String url) async {
     if (url.isEmpty) return;
 
-    // 1. 处理相对路径 (拼接域名)
+    // 处理相对路径
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       if (_currentUrl.isNotEmpty) {
         final uri = Uri.parse(_currentUrl);
@@ -51,14 +50,14 @@ class _MyHomePageState extends State<MyHomePage> {
           url = '${uri.scheme}://${uri.host}/${uri.path.substring(0, uri.path.lastIndexOf('/'))}/$url';
         }
       } else {
-        url = 'https://$url'; // 如果没域名，默认加 https
+        url = 'https://$url';
       }
     }
 
     setState(() {
       _isLoading = true;
       _currentUrl = url;
-      _urlController.text = url; // 同步到输入框
+      _urlController.text = url;
     });
 
     try {
@@ -83,20 +82,21 @@ class _MyHomePageState extends State<MyHomePage> {
         _htmlContent = '<div style="color: red;">请求出错: $e</div>';
       });
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
-  // 专门用来处理 <input> 标签的 Flutter 组件生成
+  // 处理 <input> 标签
   Widget? _buildHtmlInput(element) {
     final type = element.attributes['type']?.toLowerCase() ?? 'text';
     final placeholder = element.attributes['placeholder'] ?? '';
     final value = element.attributes['value'] ?? '';
     final name = element.attributes['name'] ?? '';
 
-    // 强制独占一行 (作为块级元素渲染)
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: _InputWrapper(
@@ -108,10 +108,10 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  // 专门用来处理 <button> 标签的 Flutter 组件生成
+  // 处理 <button> 标签
   Widget? _buildHtmlButton(element) {
     final type = element.attributes['type']?.toLowerCase() ?? 'button';
-    final text = element.innerHtml; // 获取 <button>内部的文字或图标
+    final text = element.innerHtml;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -125,15 +125,12 @@ class _MyHomePageState extends State<MyHomePage> {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('表单重置功能（模拟）被触发')),
             );
-          } else {
-            // 如果是普通 button
-            print('Button clicked: $text');
           }
         },
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.white,
           foregroundColor: Colors.black87,
-          side: const BorderSide(color: Colors.grey), // 模拟浏览器原生 button 样式
+          side: const BorderSide(color: Colors.grey),
         ),
         child: Text(text.isEmpty ? 'Button' : text),
       ),
@@ -149,7 +146,6 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
       body: Column(
         children: [
-          // 顶部搜索栏
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Row(
@@ -163,7 +159,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       filled: true,
                       fillColor: Colors.grey[200],
                     ),
-                    onSubmitted: (value) => _fetchWebContent(value), // 支持键盘回车
+                    onSubmitted: (value) => _fetchWebContent(value),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -171,7 +167,8 @@ class _MyHomePageState extends State<MyHomePage> {
                   onPressed: _isLoading ? null : () => _fetchWebContent(_urlController.text),
                   child: _isLoading 
                     ? const SizedBox(
-                        width: 20, height: 20,
+                        width: 20, 
+                        height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                       )
                     : const Text('访问'),
@@ -179,15 +176,17 @@ class _MyHomePageState extends State<MyHomePage> {
               ],
             ),
           ),
-
-          // 加载进度条指示器
-            child: LinearProgressIndicator(
-              minHeight: 4,
-              backgroundColor: Colors.transparent,
+          
+          // 修复了这里丢失的右括号
+          if (_isLoading) 
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16.0),
+              child: LinearProgressIndicator(
+                minHeight: 4,
+                backgroundColor: Colors.transparent,
+              ),
             ),
-          ),
 
-          // 底部网页渲染区域
           Expanded(
             child: Container(
               decoration: BoxDecoration(
@@ -197,12 +196,10 @@ class _MyHomePageState extends State<MyHomePage> {
                 padding: const EdgeInsets.all(16.0),
                 child: HtmlWidget(
                   _htmlContent,
-                  // 拦截链接点击，在APP内部跳转
                   onTapUrl: (url) {
                     _fetchWebContent(url);
-                    return true; // 返回 true 表示我们自己处理了跳转
+                    return true;
                   },
-                  // 自定义构建 <input> 控件
                   customWidgetBuilder: (element) {
                     if (element.localName == 'input') {
                       return _buildHtmlInput(element);
@@ -210,11 +207,9 @@ class _MyHomePageState extends State<MyHomePage> {
                     if (element.localName == 'button') {
                       return _buildHtmlButton(element);
                     }
-                    return null; // 返回 null 表示交给插件自己处理其他标签
+                    return null;
                   },
-                  // 基础样式配置
                   textStyle: const TextStyle(fontSize: 16),
-                  // 配置使其更像网页 (例如块级渲染，处理 margin 等)
                   customStylesBuilder: (element) {
                     return {
                       'margin': '0',
@@ -225,8 +220,6 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
           ),
-
-          // 底部状态栏显示当前真实 URL
           SafeArea(
             child: Container(
               width: double.infinity,
@@ -245,9 +238,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
-// ==========================================
 // 自定义的 Input 控件包装器
-// ==========================================
 class _InputWrapper extends StatefulWidget {
   final String type;
   final String placeholder;
@@ -273,8 +264,6 @@ class _InputWrapperState extends State<_InputWrapper> {
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.value);
-    
-    // 初始化 checkbox / radio 的状态
     if (widget.type == 'checkbox') {
       _isChecked = widget.value.isNotEmpty;
     }
@@ -296,7 +285,7 @@ class _InputWrapperState extends State<_InputWrapper> {
       case 'url':
         return TextField(
           controller: _controller,
-          obscureText: widget.type == 'password', // 如果是 password 类型则隐藏输入
+          obscureText: widget.type == 'password',
           decoration: InputDecoration(
             hintText: widget.placeholder,
             contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
@@ -317,29 +306,28 @@ class _InputWrapperState extends State<_InputWrapper> {
         );
       
       case 'radio':
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Radio<String>(
-              value: widget.value.isNotEmpty ? widget.value : widget.name,
-              groupValue: widget.value, // 基础模拟
-              onChanged: (val) => setState(() {}),
-            ),
-            Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name),
-          ],
+        // 兼容最新版 Flutter (3.32+)，废弃了 groupValue，改用 SegmentedButton 模拟
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8.0),
+          child: ChoiceChip(
+            label: Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name),
+            selected: _isChecked,
+            onSelected: (selected) {
+              setState(() {
+                _isChecked = selected;
+              });
+            },
+          ),
         );
 
       case 'submit':
       case 'button':
         return ElevatedButton(
-          onPressed: () {
-            // 点击 submit 按钮时的模拟动作
-          },
+          onPressed: () {},
           child: Text(widget.value.isNotEmpty ? widget.value : widget.type.toUpperCase()),
         );
         
       default:
-        // 针对不支持的类型，返回一个基础的 text 输入框
         return TextField(
           controller: _controller,
           decoration: InputDecoration(
