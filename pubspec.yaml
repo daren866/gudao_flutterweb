@@ -12,7 +12,8 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   http: ^1.1.0
-  flutter_html: ^3.0.0-beta.2  # 添加 flutter_html 依赖
+  flutter_html: ^3.0.0-beta.2  
+  url_launcher: ^6.1.0  # 添加 url_launcher 依赖
 
 dev_dependencies:
   flutter_test:
