@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_html/flutter_html.dart';  // 导入flutter_html
 
 void main() {
   runApp(const MyApp());
@@ -112,9 +113,14 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
-                  child: Text(
-                    _htmlContent,
-                    style: const TextStyle(fontFamily: 'monospace'),
+                  child: Html(
+                    data: _htmlContent,
+                    style: {
+                      "body": Style(
+                        fontSize: FontSize(16),
+                        color: Colors.black87,
+                      ),
+                    },
                   ),
                 ),
               ),
