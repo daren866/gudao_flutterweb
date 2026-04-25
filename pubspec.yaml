@@ -1,20 +1,18 @@
+name: app
+description: "A Flutter web app"
+version: 1.0.0+1
+publish_to: 'none'
+
+environment:
+  sdk: '^3.11.0'
+
 dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
   http: ^1.1.0
-  
-  # HTML 渲染
   flutter_widget_from_html: ^0.17.2
-  
-  # 错误报告和日志
-  common_error_reporter: ^latest_version
-  common_logger: ^latest_version
-  
-  # 状态管理
   flutter_bloc: ^8.1.6
-  
-  # 代码生成相关
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0
 
@@ -22,8 +20,9 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
-  
-  # 代码生成工具
   build_runner: ^2.4.13
   freezed: ^2.5.7
   json_serializable: ^6.8.0
+
+flutter:
+  uses-material-design: true
