@@ -19,6 +19,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: const MyHomePage(title: '我的应用 (完美防乱码)'),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
@@ -49,33 +50,28 @@ class _MyHomePageState extends State<MyHomePage> {
     }
 
     // 2. 响应头没有字符集时，手动读取前 1024 字节去嗅探 HTML meta 标签
-    int takeLen = response.bodyBytes.length > 1024 ? 1024 : response.bodyBytes.length;
+    int takeLen =
+        response.bodyBytes.length > 1024 ? 1024 : response.bodyBytes.length;
     List<int> previewBytes = response.bodyBytes.sublist(0, takeLen);
 
     // 用 UTF-8 粗略解码（允许部分字节错误）
     String previewStr = utf8.decode(previewBytes, allowMalformed: true);
 
-    // 查找 <meta charset="xxx"> 或 <meta http-equiv="Content-Type" content="...; charset=xxx">
-    // 用变量单独存储正则字符串，防止 Markdown 转义吞掉反斜杠
-    String charsetPattern = r'charset=["\' ]?([^"\' ;>]+)';
-    RegExp charsetRegex = RegExp(charsetPattern, caseSensitive: false);
+    // 纯数字字母下划线连字符的正则，完美避开单双引号转义灾难
+    RegExp charsetRegex =
+        RegExp(r'charset=([a-zA-Z0-9_-]+)', caseSensitive: false);
     Match? match = charsetRegex.firstMatch(previewStr);
 
     if (match != null) {
       String foundCharset = match.group(1)!.trim().toLowerCase();
-      if (foundCharset.contains('utf') || foundCharset == 'utf8') {
-        // 找到 UTF-8 声明，强制用 UTF-8 解码整个网页字节流
+      if (foundCharset.contains('utf')) {
+        // 找到 UTF 声明，强制用 UTF-8 解码整个网页字节流
         return utf8.decode(response.bodyBytes, allowMalformed: true);
       }
     }
 
-    // 3. 兜底：什么都没找到，按 GBK（简体中文网页常见）尝试解码
-    try {
-      return gbk.decode(response.bodyBytes);
-    } catch (_) {
-      // GBK 也失败了，只能返回默认的（可能乱码）
-      return response.body;
-    }
+    // 3. 兜底：什么都没找到，或者不是 UTF，返回默认的 body
+    return response.body;
   }
   // ==================== 核心防乱码方法结束 ====================
 
@@ -110,8 +106,7 @@ class _MyHomePageState extends State<MyHomePage> {
         Uri.parse(url),
         headers: {
           'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
-          'Accept-Charset': 'utf-8',
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
         },
       ).timeout(const Duration(seconds: 10));
 
@@ -184,7 +179,6 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
       body: Column(
         children: [
-          // 搜索栏
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Row(
@@ -218,7 +212,6 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
           ),
 
-          // 加载进度条
           if (_isLoading)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16.0),
@@ -226,7 +219,6 @@ class _MyHomePageState extends State<MyHomePage> {
                   minHeight: 4, backgroundColor: Colors.transparent),
             ),
 
-          // 网页渲染区域
           Expanded(
             child: Container(
               decoration: BoxDecoration(
@@ -258,8 +250,6 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
           ),
-
-          // 底部状态栏
           SafeArea(
             child: Container(
               width: double.infinity,
@@ -279,7 +269,6 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
-// ==================== Input 控件包装器 ====================
 class _InputWrapper extends StatefulWidget {
   final String type;
   final String placeholder;
