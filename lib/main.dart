@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_html/flutter_html.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   runApp(const MyApp());
@@ -37,13 +36,29 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isLoading = false;
   String _currentUrl = '';
 
-  Future<void> _fetchWebContent() async {
-    final url = _urlController.text.trim();
+  // 统一的请求方法
+  Future<void> _fetchWebContent(String url) async {
     if (url.isEmpty) return;
 
+    // 处理相对路径 (如果是 /xxx 或 xxx 这种没有域名的链接，拼上当前域名)
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      if (url.startsWith('/') && _currentUrl.isNotEmpty) {
+        final uri = Uri.parse(_currentUrl);
+        url = '${uri.scheme}://${uri.host}$url';
+      } else if (_currentUrl.isNotEmpty) {
+        // 处理类似 'page2.html' 的情况
+        final uri = Uri.parse(_currentUrl);
+        url = '${uri.scheme}://${uri.host}/${uri.path.substring(0, uri.path.lastIndexOf('/'))}/$url';
+      } else {
+        return; // 没有基础URL且不是完整链接，无法访问
+      }
+    }
+
+    // 更新输入框的网址和当前记录的网址
     setState(() {
       _isLoading = true;
       _currentUrl = url;
+      _urlController.text = url;
     });
 
     try {
@@ -57,21 +72,7 @@ class _MyHomePageState extends State<MyHomePage> {
       if (response.statusCode == 200) {
         setState(() {
           _htmlContent = response.body;
-          _currentUrl = url;
         });
-      } else if (response.statusCode >= 300 && response.statusCode < 400) {
-        final redirectUrl = response.headers['location'];
-        if (redirectUrl != null) {
-          setState(() {
-            _htmlContent = '重定向到: $redirectUrl';
-            _currentUrl = redirectUrl;
-          });
-          await _fetchWebContentWithUrl(redirectUrl);
-        } else {
-          setState(() {
-            _htmlContent = '重定向响应，但未找到location头';
-          });
-        }
       } else {
         setState(() {
           _htmlContent = '请求失败，状态码: ${response.statusCode}\n\n${response.body}';
@@ -88,41 +89,10 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  Future<void> _fetchWebContentWithUrl(String url) async {
-    try {
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
-        },
-      );
-
-      if (response.statusCode == 200) {
-        setState(() {
-          _htmlContent = response.body;
-          _currentUrl = url;
-        });
-      } else {
-        setState(() {
-          _htmlContent = '重定向后请求失败，状态码: ${response.statusCode}';
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _htmlContent = '重定向后请求出错: $e';
-      });
-    }
-  }
-
-  Future<void> _launchUrl(String url) async {
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else {
-      setState(() {
-        _htmlContent = '无法打开链接: $url';
-      });
-    }
+  // 点击访问按钮触发
+  void _onVisitPressed() {
+    final url = _urlController.text.trim();
+    _fetchWebContent(url);
   }
 
   @override
@@ -144,11 +114,12 @@ class _MyHomePageState extends State<MyHomePage> {
                       hintText: '输入网址',
                       border: OutlineInputBorder(),
                     ),
+                    onSubmitted: (value) => _onVisitPressed(), // 支持键盘回车访问
                   ),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: _isLoading ? null : _fetchWebContent,
+                  onPressed: _isLoading ? null : _onVisitPressed,
                   child: _isLoading 
                     ? const SizedBox(
                         width: 20,
@@ -174,10 +145,15 @@ class _MyHomePageState extends State<MyHomePage> {
                         fontSize: FontSize(16),
                         color: Colors.black87,
                       ),
+                      "a": Style(
+                        color: Colors.blue,
+                        textDecoration: TextDecoration.underline,
+                      ),
                     },
-                    onLinkTap: (url, _, __) {
+                    // 点击超链接时：在APP内部跳转请求
+                    onLinkTap: (url, attributes, element) {
                       if (url != null) {
-                        _launchUrl(url);
+                        _fetchWebContent(url);
                       }
                     },
                   ),
@@ -188,8 +164,9 @@ class _MyHomePageState extends State<MyHomePage> {
               Padding(
                 padding: const EdgeInsets.only(top: 8.0),
                 child: Text(
-                  '当前URL: $_currentUrl',
+                  '当前实际URL: $_currentUrl',
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
           ],
