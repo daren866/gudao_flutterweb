@@ -1,8 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:html/dom.dart' as dom;
-import 'package:html/parser.dart' as html_parser;
 
 void main() {
   runApp(const MyApp());
@@ -14,614 +14,547 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Mobile Browser',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-      ),
-      home: const MyHomePage(title: 'Mobile Browser'),
+      title: '我的应用',
+      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
+      home: const MyHomePage(title: '我的应用 (表单 + CSS布局兼容)'),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
 // ======================================================================
-// 纯 Dart 实现的安全 CSS 解析器
+// 轻量级 CSS 解析器（正则提取类名和样式属性）
 // ======================================================================
-class _MobileCssParser {
-  final List<_CssRule> _rules = [];
-  final Map<dom.Element, Map<String, String>> _styleCache = {};
-  String _baseUrl = '';
-  double _viewportWidth = 375;
-  double _viewportHeight = 812;
-  double _devicePixelRatio = 2.0;
+class _SimpleCssParser {
+  final Map<String, Map<String, String>> rules = {};
 
-  static final Map<String, Map<String, String>> _userAgentStyles = {
-    '*': {'margin': '0', 'padding': '0', 'box-sizing': 'border-box'},
-    'html': {'font-size': '14px', 'scroll-behavior': 'smooth'},
-    'body': {'font-family': '-apple-system, sans-serif', 'line-height': '1.5'},
-    'div': {'display': 'block'},
-    'span': {'display': 'inline'},
-    'p': {'display': 'block', 'margin': '0 0 16px 0'},
-    'h1': {'display': 'block', 'font-size': '2em', 'font-weight': 'bold'},
-    'h2': {'display': 'block', 'font-size': '1.5em', 'font-weight': 'bold'},
-    'a': {'text-decoration': 'none', 'color': '#007aff'},
-    'img, video': {'max-width': '100%', 'height': 'auto'},
-    'button': {'min-height': '44px', 'min-width': '44px', 'padding': '12px 20px', 'font-size': '16px', 'border-radius': '8px'},
-    'input': {'min-height': '44px', 'padding': '8px 12px', 'font-size': '16px'},
-  };
+  void parse(String html) {
+    final styleRegex = RegExp(r'<style[^>]*>(.*?)</style>', dotAll: true);
+    final matches = styleRegex.allMatches(html);
 
-  final List<_MediaQuery> _mediaQueries = [];
+    for (final match in matches) {
+      final cssText = match.group(1)?.trim() ?? '';
+      final cleanCss = cssText.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
+      final blockRegex = RegExp(r'([^{]+)\{([^}]+)\}');
+      final blocks = blockRegex.allMatches(cleanCss);
 
-  void clear() {
-    _rules.clear();
-    _mediaQueries.clear();
-    _styleCache.clear();
-  }
+      for (final block in blocks) {
+        final selector = block.group(1)?.trim() ?? '';
+        final propertiesStr = block.group(2)?.trim() ?? '';
+        final props = <String, String>{};
+        final propRegex = RegExp(r'([\w-]+)\s*:\s*([^;]+);?');
+        final propsMatches = propRegex.allMatches(propertiesStr);
 
-  void setBaseUrl(String url) => _baseUrl = url;
-
-  void setViewport({required double width, required double height, double pixelRatio = 2.0}) {
-    _viewportWidth = width;
-    _viewportHeight = height;
-    _devicePixelRatio = pixelRatio;
-  }
-
-  void parseViewportMeta(String html) {
-    final match = RegExp(r'<meta[^>]+name="viewport"[^>]+content="([^"]*)"', caseSensitive: false).firstMatch(html);
-    if (match != null) {
-      for (final part in (match.group(1) ?? '').split(',')) {
-        final t = part.trim();
-        if (t.startsWith('width=') && t.substring(6) != 'device-width') {
-          _viewportWidth = double.tryParse(t.substring(6)) ?? 375;
-        }
-      }
-    }
-  }
-
-  Future<void> parseFromHtml(String html, {http.Client? client, required double screenWidth}) async {
-    clear();
-    parseViewportMeta(html);
-    _applyUserAgentStyles();
-    await _parseStyleTags(html);
-    if (client != null && _baseUrl.isNotEmpty) {
-      await _fetchExternalStylesheets(html, client);
-    }
-    _applyMediaQueries(screenWidth);
-    _rules.sort((a, b) => b.specificity.compareTo(a.specificity));
-  }
-
-  void _applyUserAgentStyles() {
-    _userAgentStyles.forEach((sel, props) {
-      _rules.add(_CssRule(selector: sel, properties: Map.from(props), specificity: sel == '*' ? 0 : 10, source: CssSource.userAgent));
-    });
-  }
-
-  Future<void> _parseStyleTags(String html) async {
-    for (final m in RegExp(r'<style[^>]*>(.*?)</style>', dotAll: true).allMatches(html)) {
-      _parseCssText(m.group(1)?.trim() ?? '', CssSource.styleTag);
-    }
-  }
-
-  Future<void> _fetchExternalStylesheets(String html, http.Client client) async {
-    final doc = html_parser.parse(html);
-    for (final link in doc.querySelectorAll('link[rel="stylesheet"]')) {
-      final href = link.attributes['href'];
-      if (href == null || href.isEmpty) continue;
-      try {
-        final url = _resolveUrl(href);
-        final res = await client.get(Uri.parse(url), headers: {'User-Agent': 'Mozilla/5.0'}).timeout(const Duration(seconds: 5));
-        if (res.statusCode == 200) _parseCssText(res.body, CssSource.external);
-      } catch (_) {}
-    }
-  }
-
-  String _resolveUrl(String url) {
-    if (url.startsWith('http')) return url;
-    final uri = Uri.parse(_baseUrl);
-    if (url.startsWith('/')) return '${uri.scheme}://${uri.host}$url';
-    final i = uri.path.lastIndexOf('/');
-    return '${uri.scheme}://${uri.host}${i > 0 ? uri.path.substring(0, i) : ''}/$url';
-  }
-
-  void _parseCssText(String cssText, CssSource source) {
-    String cleanCss = cssText.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
-    final mediaRegex = RegExp(r'@media\s*([^{]+)\{([\s\S]*?)\}\s*\}', caseSensitive: false);
-    for (final mediaMatch in mediaRegex.allMatches(cleanCss)) {
-      final condition = mediaMatch.group(1)?.trim() ?? '';
-      final innerCss = mediaMatch.group(2) ?? '';
-      final mediaQuery = _MediaQuery(condition: condition, devicePixelRatio: _devicePixelRatio);
-      _parseRulesFromString(innerCss, source, mediaQuery.rules);
-      _mediaQueries.add(mediaQuery);
-      cleanCss = cleanCss.replaceAll(mediaMatch.group(0)!, '');
-    }
-    _parseRulesFromString(cleanCss, source, _rules);
-  }
-
-  void _parseRulesFromString(String cssStr, CssSource source, List<_CssRule> targetList) {
-    final blockRegex = RegExp(r'([^{]+)\{([^}]*)\}');
-    for (final match in blockRegex.allMatches(cssStr)) {
-      final selector = match.group(1)?.trim() ?? '';
-      final propsStr = match.group(2)?.trim() ?? '';
-      if (selector.isEmpty || propsStr.isEmpty) continue;
-
-      final props = <String, String>{};
-      for (final prop in propsStr.split(';')) {
-        final parts = prop.split(':');
-        if (parts.length >= 2) {
-          final key = parts[0].trim().toLowerCase();
-          final value = parts.sublist(1).join(':').trim(); 
+        for (final prop in propsMatches) {
+          final key = prop.group(1)?.trim().toLowerCase() ?? '';
+          final value = prop.group(2)?.trim() ?? '';
           if (key.isNotEmpty) props[key] = value;
         }
+
+        if (selector.startsWith('.') && props.isNotEmpty) {
+          rules[selector] = props;
+        }
       }
+    }
+  }
 
-      if (props.isNotEmpty) {
-        targetList.add(_CssRule(selector: selector, properties: props, specificity: _spec(selector), source: source));
+  Map<String, String>? getStylesForElement(dom.Element element) {
+    final classes = element.classes;
+    if (classes.isEmpty) return null;
+    Map<String, String>? matchedStyles;
+    for (final className in classes) {
+      final selector = '.$className';
+      if (rules.containsKey(selector)) {
+        matchedStyles ??= {};
+        matchedStyles.addAll(rules[selector]!);
       }
     }
-  }
-
-  void _applyMediaQueries(double sw) {
-    for (final q in _mediaQueries) {
-      if (q.matches(sw, _viewportHeight)) _rules.addAll(q.rules);
-    }
-  }
-
-  Map<String, String> _parseProps(String str) {
-    final m = <String, String>{};
-    for (final p in RegExp(r'([\w-]+)\s*:\s*([^;]+);?').allMatches(str)) {
-      m[p.group(1)?.trim().toLowerCase() ?? ''] = p.group(2)?.trim() ?? '';
-    }
-    return m;
-  }
-
-  int _spec(String sel) {
-    int s = 0;
-    s += '#'.allMatches(sel).length * 10000;
-    s += '.'.allMatches(sel).length * 100;
-    s += '['.allMatches(sel).length * 100;
-    if (RegExp(r'^[a-zA-Z]+').hasMatch(sel)) s += 1;
-    return s;
-  }
-
-  Map<String, String> getComputedStyle(dom.Element element) {
-    if (_styleCache.containsKey(element)) return Map.from(_styleCache[element]!);
-    final styles = <String, String>{};
-    if (_userAgentStyles.containsKey('*')) styles.addAll(_userAgentStyles['*']!);
-    final tag = element.localName?.toLowerCase() ?? '';
-    if (_userAgentStyles.containsKey(tag)) styles.addAll(_userAgentStyles[tag]!);
-    for (final r in _rules) {
-      if (_matches(element, r.selector)) styles.addAll(r.properties);
-    }
-    final inline = element.attributes['style'];
-    if (inline != null && inline.isNotEmpty) styles.addAll(_parseProps(inline));
-    styles.forEach((k, v) => styles[k] = _resolveValue(v));
-    _styleCache[element] = Map.from(styles);
-    return styles;
-  }
-
-  String _resolveValue(String v) {
-    v = v.replaceAllMapped(RegExp(r'calc\(\s*100%\s*-\s*([\d.]+)px\s*\)'), (m) {
-      final px = double.parse(m.group(1)!);
-      return '${(_viewportWidth - px).round()}px';
-    });
-    v = v.replaceAllMapped(RegExp(r'([\d.]+)vw'), (m) => '${(double.parse(m.group(1)!) / 100 * _viewportWidth).round()}px');
-    v = v.replaceAllMapped(RegExp(r'([\d.]+)vh'), (m) => '${(double.parse(m.group(1)!) / 100 * _viewportHeight).round()}px');
-    v = v.replaceAllMapped(RegExp(r'([\d.]+)rem'), (m) => '${(double.parse(m.group(1)!) * 14).round()}px');
-    return v;
-  }
-
-  bool _matches(dom.Element el, String sel) {
-    if (sel == '*' || sel == 'body') return true;
-    if (sel == el.localName) return true;
-    if (sel.startsWith('.')) return el.classes.contains(sel.substring(1));
-    if (sel.startsWith('#')) return el.attributes['id'] == sel.substring(1);
-    return sel.split(',').any((s) => s.trim() == el.localName);
+    return matchedStyles;
   }
 }
 
-class _CssRule {
-  final String selector;
-  final Map<String, String> properties;
-  final int specificity;
-  final CssSource source;
-  _CssRule({required this.selector, required this.properties, required this.specificity, required this.source});
-}
-
-class _MediaQuery {
-  final String condition;
-  final double devicePixelRatio;
-  final List<_CssRule> rules = [];
-  _MediaQuery({required this.condition, required this.devicePixelRatio});
-
-  bool matches(double sw, double sh) {
-    final mw = RegExp(r'max-width:\s*(\d+)px').firstMatch(condition);
-    if (mw != null) return sw <= double.parse(mw.group(1)!);
-    final miw = RegExp(r'min-width:\s*(\d+)px').firstMatch(condition);
-    if (miw != null) return sw >= double.parse(miw.group(1)!);
-    if (condition.contains('landscape')) return sw > sh;
-    if (condition.contains('portrait')) return sw <= sh;
-    return false;
-  }
-}
-
-enum CssSource { userAgent, external, styleTag, inline }
-
+// ======================================================================
+// 表单数据模型
+// ======================================================================
 class _FormData extends ChangeNotifier {
-  final String method, action;
+  final String method;
+  final String action;
   final Map<String, String> values = {};
+
   _FormData({required this.method, required this.action});
-  void setValue(String k, String v) { values[k] = v; notifyListeners(); }
+
+  void setValue(String name, String value) {
+    values[name] = value;
+    notifyListeners();
+  }
 }
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
   final String title;
+
   @override
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  final _urlCtrl = TextEditingController();
-  String _html = '<meta name="viewport" content="width=device-width, initial-scale=1"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:sans-serif;line-height:1.5}.container{display:flex;flex-direction:column;gap:16px;padding:16px}.btn{padding:12px 20px;min-height:44px;font-size:16px;border-radius:8px;background:#007aff;color:white;border:none;display:inline-block}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{background:white;border-radius:8px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,0.1)}</style><div class="container"><h1>Demo</h1><div class="grid-2"><div class="card">Grid 1</div><div class="card">Grid 2</div></div><button class="btn">Click Me</button></div>';
-  bool _loading = false;
-  String _url = '';
-  final Map<int, _FormData> _forms = {};
-  late _MobileCssParser _cssParser;
-  http.Client? _client;
+  final TextEditingController _urlController = TextEditingController();
+  String _htmlContent = '''
+    <style>
+      .flex-row { display: flex; flex-direction: row; justify-content: space-between; gap: 10px; background-color: #f0f0f0; padding: 10px; margin-bottom: 15px; border-radius: 5px; }
+      .flex-col { display: flex; flex-direction: column; gap: 8px; background-color: #e0f7fa; padding: 10px; margin-bottom: 15px; border-radius: 5px; }
+      .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; background-color: #fff3e0; padding: 10px; margin-bottom: 15px; border-radius: 5px; }
+      .box { background-color: #2196f3; color: white; padding: 10px; border-radius: 4px; text-align: center; }
+    </style>
+    <h2>演示: CSS Style 兼容与表单</h2>
+    <div class="flex-row"><div class="box">Flex 1</div><div class="box">Flex 2</div><div class="box">Flex 3</div></div>
+    <div class="grid-3"><div class="box">G1</div><div class="box">G2</div><div class="box">G3</div></div>
+    <form method="get" action="/search">
+      <div class="flex-row">
+        <input type="text" name="q" placeholder="输入关键词..." style="flex: 1;">
+        <input type="submit" value="搜索">
+      </div>
+    </form>
+  ''';
+  
+  bool _isLoading = false;
+  String _currentUrl = '';
+  final Map<int, _FormData> _formRegistry = {};
+  late _SimpleCssParser cssParser;
 
   @override
   void initState() {
     super.initState();
-    _cssParser = _MobileCssParser();
-    _client = http.Client();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _init());
+    cssParser = _SimpleCssParser();
+    _updateCssParser();
   }
 
-  Future<void> _init() async {
-    final s = MediaQuery.of(context).size;
-    _cssParser.setViewport(width: s.width, height: s.height, pixelRatio: MediaQuery.of(context).devicePixelRatio);
-    await _cssParser.parseFromHtml(_html, client: _client, screenWidth: s.width);
-    if (mounted) setState(() {});
+  void _updateCssParser() {
+    cssParser.parse(_htmlContent);
   }
 
-  @override
-  void dispose() { _client?.close(); _urlCtrl.dispose(); super.dispose(); }
-
-  Future<void> _update(String html, String baseUrl) async {
-    _cssParser.setBaseUrl(baseUrl);
-    final s = MediaQuery.of(context).size;
-    _cssParser.setViewport(width: s.width, height: s.height, pixelRatio: MediaQuery.of(context).devicePixelRatio);
-    await _cssParser.parseFromHtml(html, client: _client, screenWidth: s.width);
-    if (mounted) setState(() {});
-  }
-
-  // 修复点：将 n 赋值给 formElement，避免闭包内的 null 安全错误
-  _FormData? _formOf(dom.Element el) {
-    dom.Node? n = el.parent;
-    while (n != null) {
-      if (n is dom.Element && n.localName == 'form') {
-        final formElement = n; // 提前赋值，保留非空类型提升
-        return _forms.putIfAbsent(formElement.hashCode, () => _FormData(
-          method: formElement.attributes['method']?.toLowerCase() ?? 'get', 
-          action: formElement.attributes['action'] ?? ''
-        ));
+  _FormData? _getFormDataForElement(dom.Element element) {
+    dom.Node? node = element.parent;
+    while (node != null) {
+      if (node is dom.Element && node.localName == 'form') {
+        final formElement = node;
+        return _formRegistry.putIfAbsent(formElement.hashCode, () {
+          final method = formElement.attributes['method']?.toLowerCase() ?? 'get';
+          final action = formElement.attributes['action'] ?? '';
+          return _FormData(method: method, action: action);
+        });
       }
-      n = n.parent;
+      node = node.parent;
     }
     return null;
   }
 
-  String _resolve(String url) {
-    if (url.startsWith('http')) return url;
-    if (_url.isEmpty) return 'https://$url';
-    final u = Uri.parse(_url);
-    if (url.startsWith('/')) return '${u.scheme}://${u.host}$url';
-    final i = u.path.lastIndexOf('/');
-    return '${u.scheme}://${u.host}${i > 0 ? u.path.substring(0, i) : ''}/$url';
+  String _resolveUrl(String url) {
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    if (_currentUrl.isEmpty) return 'https://$url';
+    final uri = Uri.parse(_currentUrl);
+    if (url.startsWith('/')) return '${uri.scheme}://${uri.host}$url';
+    final path = uri.path;
+    final lastSlash = path.lastIndexOf('/');
+    final basePath = lastSlash > 0 ? path.substring(0, lastSlash) : '';
+    return '${uri.scheme}://${uri.host}$basePath/$url';
   }
 
-  Future<void> _go(String url) async {
+  String _fixEncoding(http.Response response) {
+    final contentType = response.headers['content-type'] ?? '';
+    if (contentType.toLowerCase().contains('charset=')) return response.body;
+    final takeLen = response.bodyBytes.length > 1024 ? 1024 : response.bodyBytes.length;
+    final previewBytes = response.bodyBytes.sublist(0, takeLen);
+    final previewStr = utf8.decode(previewBytes, allowMalformed: true);
+    final charsetRegex = RegExp(r'charset=([a-zA-Z0-9_-]+)', caseSensitive: false);
+    final match = charsetRegex.firstMatch(previewStr);
+    if (match != null && match.group(1)!.trim().toLowerCase().contains('utf')) {
+      return utf8.decode(response.bodyBytes, allowMalformed: true);
+    }
+    return response.body;
+  }
+
+  Future<void> _fetchWebContent(String url) async {
     if (url.isEmpty) return;
-    final full = _resolve(url);
-    setState(() { _loading = true; _url = full; _urlCtrl.text = full; _forms.clear(); });
+    final fullUrl = _resolveUrl(url);
+    setState(() {
+      _isLoading = true;
+      _currentUrl = fullUrl;
+      _urlController.text = fullUrl;
+      _formRegistry.clear();
+    });
     try {
-      final r = await http.get(Uri.parse(full), headers: {'User-Agent': 'Mozilla/5.0'}).timeout(const Duration(seconds: 10));
-      if (r.statusCode == 200) { setState(() => _html = r.body); await _update(r.body, full); }
-      else { setState(() => _html = '<p style="color:red">Error: ${r.statusCode}</p>'); }
-    } catch (e) { setState(() => _html = '<p style="color:red">$e</p>'); }
-    finally { if (mounted) setState(() => _loading = false); }
-  }
-
-  Future<void> _submit(_FormData fd) async {
-    final full = fd.action.isNotEmpty ? _resolve(fd.action) : _url;
-    if (full.isEmpty) return;
-    setState(() => _loading = true);
-    try {
-      final data = Map.fromEntries(fd.values.entries.where((e) => e.key.isNotEmpty));
-      http.Response r;
-      if (fd.method == 'post') {
-        r = await http.post(Uri.parse(full), headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: data).timeout(const Duration(seconds: 10));
+      final response = await http.get(Uri.parse(fullUrl), headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        setState(() {
+          _htmlContent = _fixEncoding(response);
+          _updateCssParser(); // 网页加载后重新解析 CSS
+        });
       } else {
-        final qs = data.entries.map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}').join('&');
-        r = await http.get(Uri.parse(qs.isNotEmpty ? '$full?$qs' : full)).timeout(const Duration(seconds: 10));
+        setState(() => _htmlContent = '<p style="color:red">请求失败: ${response.statusCode}</p>');
       }
-      setState(() { _url = full; _urlCtrl.text = full; _html = r.body; });
-      await _update(r.body, full);
-    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'))); }
-    finally { if (mounted) setState(() => _loading = false); }
-  }
-
-  Widget? _buildCustom(dom.Element el) {
-    final tag = el.localName;
-    if (tag == 'input') return _input(el);
-    if (tag == 'button') return _button(el);
-    if (tag == 'select') return _select(el);
-    if (tag == 'textarea') return _textarea(el);
-    if (tag == 'option' || tag == 'style' || tag == 'meta' || tag == 'link' || tag == 'script' || tag == 'head') return const SizedBox.shrink();
-
-    final st = _cssParser.getComputedStyle(el);
-    final d = st['display'];
-    if (d == 'flex' || d == 'inline-flex') return _flex(el, st);
-    if (d == 'grid' || d == 'inline-grid') return _grid(el, st);
-    if (tag == 'img') return _img(el, st);
-    if (tag == 'a') return _link(el, st);
-    return _styled(el, st);
-  }
-
-  Widget _flex(dom.Element el, Map<String, String> st) {
-    final dir = st['flex-direction'] == 'column' ? Axis.vertical : Axis.horizontal;
-    final wrap = st['flex-wrap'] == 'wrap';
-    final gap = _px(st['gap']);
-    Widget child;
-    if (wrap) {
-      child = Wrap(spacing: gap ?? 8, runSpacing: gap ?? 8, children: el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList());
-    } else {
-      child = Flex(direction: dir, mainAxisAlignment: _main(st['justify-content']), crossAxisAlignment: _cross(st['align-items']), children: _gap(el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList(), gap, dir));
+    } catch (e) {
+      setState(() => _htmlContent = '<p style="color:red">请求出错: $e</p>');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-    child = Container(margin: _insets(st['margin']), padding: _insets(st['padding']), constraints: BoxConstraints(maxWidth: _px(st['max-width']) ?? double.infinity), decoration: BoxDecoration(color: _color(st['background-color']), borderRadius: _radius(st['border-radius']), boxShadow: _shadow(st['box-shadow']), border: _border(st['border-bottom'])), child: child);
-    return _wrapWithEffects(child, st);
   }
 
-  Widget _grid(dom.Element el, Map<String, String> st) {
-    final cols = st['grid-template-columns']?.split(' ').where((s) => s.trim().isNotEmpty).length ?? 1;
-    final gap = _px(st['gap']);
-    final p = _insets(st['padding']);
-    Widget child = IntrinsicHeight(child: Container(margin: _insets(st['margin']), padding: p, constraints: BoxConstraints(maxWidth: _px(st['max-width']) ?? double.infinity), decoration: BoxDecoration(color: _color(st['background-color']), borderRadius: _radius(st['border-radius'])), child: LayoutBuilder(builder: (_, c) {
-      final usableWidth = (c.maxWidth.isFinite ? c.maxWidth : MediaQuery.of(context).size.width) - p.horizontal - (cols - 1) * (gap ?? 8);
-      final w = (usableWidth / cols).clamp(0.0, double.infinity);
-      return Wrap(spacing: gap ?? 8, runSpacing: gap ?? 8, children: el.children.map((ch) => SizedBox(width: w, child: HtmlWidget(ch.outerHtml, customWidgetBuilder: _buildCustom))).toList());
-    })));
-    return _wrapWithEffects(child, st);
-  }
-
-  Widget _img(dom.Element el, Map<String, String> st) {
-    final src = el.attributes['src'] ?? '';
-    Widget child = Container(margin: _insets(st['margin']), child: src.isNotEmpty ? ClipRRect(borderRadius: _radius(st['border-radius']) ?? BorderRadius.zero, child: Image.network(src, fit: BoxFit.contain, errorBuilder: (_, __, ___) => _placeholder())) : _placeholder());
-    return _wrapWithEffects(child, st);
-  }
-
-  Widget _placeholder() => Container(height: 200, color: Colors.grey[300], child: const Center(child: Icon(Icons.broken_image)));
-
-  Widget _link(dom.Element el, Map<String, String> st) {
-    final href = el.attributes['href'] ?? '';
-    Widget child = GestureDetector(onTap: () { if (href.isNotEmpty) _go(_resolve(href)); }, child: Container(margin: _insets(st['margin']), padding: _insets(st['padding']), constraints: BoxConstraints(minHeight: _px(st['min-height']) ?? 44), child: HtmlWidget(el.innerHtml, customWidgetBuilder: _buildCustom, textStyle: TextStyle(color: _color(st['color']) ?? const Color(0xFF007AFF)))));
-    return _wrapWithEffects(child, st);
-  }
-
-  Widget? _styled(dom.Element el, Map<String, String> st) {
-    final bg = _color(st['background-color']);
-    final p = _insets(st['padding']);
-    final m = _insets(st['margin']);
-    final r = _radius(st['border-radius']);
-    final border = _border(st['border-bottom']);
-    final shadow = _shadow(st['box-shadow']);
-    final maxWidth = _px(st['max-width']);
-    final noWrap = st['white-space'] == 'nowrap';
-    if (bg == null && p == EdgeInsets.zero && m == EdgeInsets.zero && r == null && border == null && shadow == null && maxWidth == null && noWrap == false) return null;
-    Widget child = HtmlWidget(el.innerHtml, customWidgetBuilder: _buildCustom, textStyle: TextStyle(fontSize: 14, overflow: noWrap ? TextOverflow.ellipsis : null));
-    if (m != EdgeInsets.zero || p != EdgeInsets.zero || bg != null || r != null || border != null || shadow != null || maxWidth != null) {
-      child = Container(margin: m, padding: p, constraints: BoxConstraints(maxWidth: maxWidth ?? double.infinity), decoration: BoxDecoration(color: bg, borderRadius: r, border: border, boxShadow: shadow), child: child);
+  Future<void> _submitForm(_FormData formData) async {
+    final action = formData.action;
+    final fullUrl = action.isNotEmpty ? _resolveUrl(action) : _currentUrl;
+    if (fullUrl.isEmpty) return;
+    setState(() => _isLoading = true);
+    try {
+      final data = Map.fromEntries(formData.values.entries.where((e) => e.key.isNotEmpty));
+      http.Response response;
+      if (formData.method == 'post') {
+        response = await http.post(Uri.parse(fullUrl), headers: {
+          'User-Agent': 'Mozilla/5.0...', 'Content-Type': 'application/x-www-form-urlencoded',
+        }, body: data).timeout(const Duration(seconds: 10));
+      } else {
+        final queryString = data.entries.map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}').join('&');
+        final url = queryString.isNotEmpty ? '$fullUrl?$queryString' : fullUrl;
+        response = await http.get(Uri.parse(url), headers: {
+          'User-Agent': 'Mozilla/5.0...'
+        }).timeout(const Duration(seconds: 10));
+      }
+      setState(() {
+        _currentUrl = fullUrl; _urlController.text = fullUrl;
+        if (response.statusCode == 200) {
+          _htmlContent = _fixEncoding(response);
+          _updateCssParser(); // 表单跳转后重新解析新页面的 CSS
+        } else {
+          _htmlContent = '<p style="color:red">提交返回状态码: ${response.statusCode}</p>';
+        }
+      });
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('表单提交出错: $e')));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-    return _wrapWithEffects(child, st);
   }
 
-  Widget _input(dom.Element el) {
-    final fd = _formOf(el);
-    return _InputW(type: el.attributes['type'] ?? 'text', placeholder: el.attributes['placeholder'] ?? '', value: el.attributes['value'] ?? '', name: el.attributes['name'] ?? '', formData: fd, onSubmit: fd != null ? () => _submit(fd) : null);
+  // ==================================================================
+  // 核心：融合了 CSS 布局拦截 与 表单控件拦截
+  // ==================================================================
+  Widget? _buildCustomWidget(dom.Element element) {
+    final tag = element.localName;
+    
+    // 1. 表单控件优先级最高（必须拦截，否则会变成纯文本）
+    if (tag == 'input') return _buildHtmlInput(element);
+    if (tag == 'button') return _buildHtmlButton(element);
+    if (tag == 'select') return _buildHtmlSelect(element);
+    if (tag == 'textarea') return _buildHtmlTextarea(element);
+    if (tag == 'option') return const SizedBox.shrink();
+
+    // 2. CSS Flex / Grid 布局拦截
+    final styles = cssParser.getStylesForElement(element);
+    final display = styles?['display'];
+    if (display == 'flex') return _buildFlexLayout(element, styles!);
+    if (display == 'grid') return _buildGridLayout(element, styles!);
+
+    return null; // 交给 flutter_widget_from_html 默认处理
   }
 
-  Widget _button(dom.Element el) {
-    final fd = _formOf(el);
-    final st = _cssParser.getComputedStyle(el);
-    return _wrapWithEffects(_BtnW(type: el.attributes['type'] ?? 'button', text: el.innerHtml, formData: fd, onSubmit: fd != null ? () => _submit(fd) : null), st);
+  // --------------------------------------------------
+  // CSS 到 Flutter 布局翻译器
+  // --------------------------------------------------
+  Widget _buildFlexLayout(dom.Element element, Map<String, String> styles) {
+    final direction = styles['flex-direction'] == 'column' ? Axis.vertical : Axis.horizontal;
+    final mainAxisAlignment = _parseMainAxisAlignment(styles['justify-content']);
+    final crossAxisAlignment = _parseCrossAxisAlignment(styles['align-items']);
+    double? gap = _parsePx(styles['gap']);
+    Color? bgColor = _parseColor(styles['background-color']);
+    EdgeInsets padding = _parsePadding(styles['padding']);
+    EdgeInsets margin = _parseMargin(styles['margin']);
+    double? borderRadius = _parsePx(styles['border-radius']);
+
+    final children = element.children.map((child) {
+      return HtmlWidget(child.outerHtml, customWidgetBuilder: _buildCustomWidget);
+    }).toList();
+
+    return Container(
+      margin: margin,
+      padding: padding,
+      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(borderRadius ?? 0)),
+      child: Flex(
+        direction: direction,
+        mainAxisAlignment: mainAxisAlignment,
+        crossAxisAlignment: crossAxisAlignment,
+        children: _wrapWithGap(children, gap, direction),
+      ),
+    );
   }
 
-  Widget _select(dom.Element el) {
-    final fd = _formOf(el);
-    final items = el.getElementsByTagName('option').map((o) => MapEntry(o.text.trim(), o.attributes['value'] ?? o.text.trim())).toList();
-    return _SelW(items: items, name: el.attributes['name'] ?? '', formData: fd);
+  Widget _buildGridLayout(dom.Element element, Map<String, String> styles) {
+    final columnsStr = styles['grid-template-columns'];
+    int columnCount = columnsStr?.split(' ').where((s) => s.trim().isNotEmpty).length ?? 1;
+    double? gap = _parsePx(styles['gap']);
+    Color? bgColor = _parseColor(styles['background-color']);
+    EdgeInsets padding = _parsePadding(styles['padding']);
+    EdgeInsets margin = _parseMargin(styles['margin']);
+    double? borderRadius = _parsePx(styles['border-radius']);
+
+    return Container(
+      margin: margin,
+      padding: padding,
+      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(borderRadius ?? 0)),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final totalGap = gap != null ? (columnCount - 1) * gap : 0;
+          final itemWidth = (constraints.maxWidth - padding.horizontal - totalGap) / columnCount;
+          
+          return Wrap(
+            spacing: gap ?? 0,
+            runSpacing: gap ?? 0,
+            children: element.children.map((child) {
+              return SizedBox(
+                width: itemWidth,
+                child: HtmlWidget(child.outerHtml, customWidgetBuilder: _buildCustomWidget),
+              );
+            }).toList(),
+          );
+        },
+      ),
+    );
   }
 
-  Widget _textarea(dom.Element el) {
-    final fd = _formOf(el);
-    return _TxtW(name: el.attributes['name'] ?? '', placeholder: el.attributes['placeholder'] ?? '', value: el.text.trim(), formData: fd);
+  List<Widget> _wrapWithGap(List<Widget> children, double? gap, Axis direction) {
+    if (gap == null || children.isEmpty) return children;
+    return List.generate(children.length * 2 - 1, (index) {
+      if (index.isOdd) {
+        return SizedBox(width: direction == Axis.horizontal ? gap : 0, height: direction == Axis.vertical ? gap : 0);
+      }
+      return children[index ~/ 2];
+    });
   }
 
-  Widget _wrapWithEffects(Widget child, Map<String, String> st) {
-    final opacityVal = st['opacity'];
-    if (opacityVal != null) { final opacity = double.tryParse(opacityVal); if (opacity != null && opacity < 1.0) child = Opacity(opacity: opacity, child: child); }
-    final transformStr = st['transform'] ?? '';
-    final scaleMatch = RegExp(r'scale\(([\d.]+)\)').firstMatch(transformStr);
-    if (scaleMatch != null) { final scale = double.parse(scaleMatch.group(1)!); child = Transform.scale(scale: scale, child: child); }
-    if (st['overflow-x'] == 'auto') { child = SingleChildScrollView(scrollDirection: Axis.horizontal, child: child); }
-    return child;
+  // --------------------------------------------------
+  // 表单控件生成器 (与你原有代码完全一致)
+  // --------------------------------------------------
+  Widget? _buildHtmlInput(dom.Element element) {
+    final type = element.attributes['type']?.toLowerCase() ?? 'text';
+    final name = element.attributes['name'] ?? '';
+    final value = element.attributes['value'] ?? '';
+    final placeholder = element.attributes['placeholder'] ?? '';
+    final formData = _getFormDataForElement(element);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: _InputWrapper(type: type, placeholder: placeholder, value: value, name: name, formData: formData, onSubmit: formData != null ? () => _submitForm(formData) : null),
+    );
   }
 
-  List<Widget> _gap(List<Widget> c, double? g, Axis d) {
-    if (g == null || c.isEmpty) return c;
-    return List.generate(c.length * 2 - 1, (i) => i.isOdd ? SizedBox(width: d == Axis.horizontal ? g : 0, height: d == Axis.vertical ? g : 0) : c[i ~/ 2]);
+  Widget? _buildHtmlButton(dom.Element element) {
+    final type = element.attributes['type']?.toLowerCase() ?? 'button';
+    final text = element.innerHtml;
+    final formData = _getFormDataForElement(element);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: _FormButtonWrapper(type: type, text: text, formData: formData, onSubmit: formData != null ? () => _submitForm(formData) : null),
+    );
   }
 
-  double? _px(String? v) { if (v == null) return null; final m = RegExp(r'([\d.]+)').firstMatch(v); return m != null ? double.tryParse(m.group(1)!) : null; }
+  Widget? _buildHtmlSelect(dom.Element element) {
+    final name = element.attributes['name'] ?? '';
+    final formData = _getFormDataForElement(element);
+    final options = element.getElementsByTagName('option');
+    final items = options.map((opt) => MapEntry(opt.text.trim(), opt.attributes['value'] ?? opt.text.trim())).toList();
+    return Padding(padding: const EdgeInsets.symmetric(vertical: 4.0), child: _SelectWrapper(items: items, name: name, formData: formData));
+  }
 
-  Color? _color(String? v) {
-    if (v == null || v == 'transparent') return null;
-    if (v == 'white') return const Color(0xFFFFFFFF);
-    if (v == 'black') return const Color(0xFF000000);
-    if (v.startsWith('#')) {
-      final h = v.substring(1);
-      if (h.length == 6) return Color(int.parse('FF$h', radix: 16));
-      if (h.length == 3) return Color(int.parse('FF${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}', radix: 16));
-    }
-    final rgbMatch = RegExp(r'rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)').firstMatch(v);
-    if (rgbMatch != null) return Color.fromRGBO(int.parse(rgbMatch.group(1)!), int.parse(rgbMatch.group(2)!), int.parse(rgbMatch.group(3)!), rgbMatch.group(4) != null ? double.parse(rgbMatch.group(4)!) : 1.0);
+  Widget? _buildHtmlTextarea(dom.Element element) {
+    final name = element.attributes['name'] ?? '';
+    final placeholder = element.attributes['placeholder'] ?? '';
+    final value = element.text.trim();
+    final formData = _getFormDataForElement(element);
+    return Padding(padding: const EdgeInsets.symmetric(vertical: 4.0), child: _TextareaWrapper(name: name, placeholder: placeholder, value: value, formData: formData));
+  }
+
+  // --------------------------------------------------
+  // CSS 属性解析辅助方法
+  // --------------------------------------------------
+  double? _parsePx(String? value) {
+    if (value == null) return null;
+    final match = RegExp(r'([\d.]+)').firstMatch(value);
+    return match != null ? double.parse(match.group(1)!) : null;
+  }
+  Color? _parseColor(String? value) {
+    if (value == null || !value.startsWith('#')) return null;
+    final hex = value.replaceAll('#', '');
+    if (hex.length == 6) return Color(int.parse('FF$hex', radix: 16));
     return null;
   }
-
-  EdgeInsets _insets(String? v) {
-    if (v == null || v == '0') return EdgeInsets.zero;
-    final parts = v.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
-    if (parts.length == 1) return EdgeInsets.all(_px(parts[0]) ?? 0);
-    if (parts.length == 2) return EdgeInsets.symmetric(vertical: _px(parts[0]) ?? 0, horizontal: _px(parts[1]) ?? 0);
-    if (parts.length == 4) return EdgeInsets.fromLTRB(_px(parts[3]) ?? 0, _px(parts[0]) ?? 0, _px(parts[1]) ?? 0, _px(parts[2]) ?? 0);
-    return EdgeInsets.all(_px(v) ?? 0);
+  EdgeInsets _parsePadding(String? value) => EdgeInsets.all(_parsePx(value) ?? 0);
+  EdgeInsets _parseMargin(String? value) => EdgeInsets.all(_parsePx(value) ?? 0);
+  MainAxisAlignment _parseMainAxisAlignment(String? value) {
+    switch (value) {
+      case 'center': return MainAxisAlignment.center;
+      case 'space-between': return MainAxisAlignment.spaceBetween;
+      case 'space-around': return MainAxisAlignment.spaceAround;
+      case 'flex-end': return MainAxisAlignment.end;
+      default: return MainAxisAlignment.start;
+    }
+  }
+  CrossAxisAlignment _parseCrossAxisAlignment(String? value) {
+    switch (value) {
+      case 'center': return CrossAxisAlignment.center;
+      case 'flex-end': return CrossAxisAlignment.end;
+      case 'stretch': return CrossAxisAlignment.stretch;
+      default: return CrossAxisAlignment.center;
+    }
   }
 
-  BorderRadius? _radius(String? v) { final r = _px(v); return r != null && r > 0 ? BorderRadius.circular(r) : null; }
-
-  Border? _border(String? v) {
-    if (v == null || v == 'none') return null;
-    final m = RegExp(r'([\d.]+)px\s+solid\s+(#[0-9a-fA-F]{3,6})').firstMatch(v);
-    if (m != null) return Border(bottom: BorderSide(color: _color(m.group(2))!, width: double.parse(m.group(1)!)));
-    return null;
-  }
-
-  List<BoxShadow>? _shadow(String? v) {
-    if (v == null || v == 'none') return null;
-    final m = RegExp(r'([\d.]+)px\s+([\d.]+)px\s+([\d.]+)px\s+rgba?\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)').firstMatch(v);
-    if (m != null) return [BoxShadow(offset: Offset(double.parse(m.group(1)!), double.parse(m.group(2)!)), blurRadius: double.parse(m.group(3)!), color: Color.fromRGBO(int.parse(m.group(4)!), int.parse(m.group(5)!), int.parse(m.group(6)!), double.parse(m.group(7)!)))];
-    return null;
-  }
-
-  MainAxisAlignment _main(String? v) {
-    switch (v) { case 'center': return MainAxisAlignment.center; case 'flex-end': return MainAxisAlignment.end; case 'space-between': return MainAxisAlignment.spaceBetween; case 'space-around': return MainAxisAlignment.spaceAround; case 'space-evenly': return MainAxisAlignment.spaceEvenly; default: return MainAxisAlignment.start; }
-  }
-
-  CrossAxisAlignment _cross(String? v) {
-    switch (v) { case 'center': return CrossAxisAlignment.center; case 'flex-end': return CrossAxisAlignment.end; case 'stretch': return CrossAxisAlignment.stretch; default: return CrossAxisAlignment.center; }
-  }
-
+  // ==================================================================
+  // UI 主框架
+  // ==================================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(widget.title), backgroundColor: Theme.of(context).colorScheme.inversePrimary),
       body: Column(
         children: [
-          Container(padding: const EdgeInsets.all(8), child: Row(children: [
-            Expanded(child: TextField(controller: _urlCtrl, onSubmitted: _go, decoration: InputDecoration(hintText: 'URL...', contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), border: OutlineInputBorder(borderRadius: BorderRadius.circular(20)), filled: true, fillColor: Colors.grey[100]))),
-            const SizedBox(width: 8),
-            ElevatedButton(onPressed: _loading ? null : () => _go(_urlCtrl.text), child: _loading ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Go'))
-          ])),
-          if (_loading) const LinearProgressIndicator(minHeight: 2),
-          Expanded(child: SingleChildScrollView(padding: const EdgeInsets.all(12), child: HtmlWidget(_html, onTapUrl: (url) { _go(url); return true; }, customWidgetBuilder: _buildCustom, textStyle: const TextStyle(fontSize: 14, height: 1.5)))),
-          Container(width: double.infinity, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), color: Colors.grey[100], child: Text(_url.isNotEmpty ? _url : 'Ready', style: const TextStyle(fontSize: 11, color: Colors.grey), overflow: TextOverflow.ellipsis))
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              children: [
+                Expanded(child: TextField(controller: _urlController, onSubmitted: _fetchWebContent, decoration: InputDecoration(hintText: '输入网址', border: const OutlineInputBorder(), filled: true, fillColor: Colors.grey[200]))),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _isLoading ? null : () => _fetchWebContent(_urlController.text),
+                  child: _isLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('访问'),
+                ),
+              ],
+            ),
+          ),
+          if (_isLoading) const Padding(padding: EdgeInsets.symmetric(horizontal: 16.0), child: LinearProgressIndicator(minHeight: 4, backgroundColor: Colors.transparent)),
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(border: Border.all(width: 2, color: Theme.of(context).dividerColor)),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16.0),
+                child: HtmlWidget(
+                  _htmlContent,
+                  onTapUrl: (url) { _fetchWebContent(url); return true; },
+                  customWidgetBuilder: _buildCustomWidget, // 统一入口
+                  textStyle: const TextStyle(fontSize: 16),
+                  customStylesBuilder: (element) => {'margin': '0', 'padding': '0'},
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.grey[300],
+              child: Text('当前 URL: $_currentUrl', style: const TextStyle(fontSize: 12, color: Colors.black54), overflow: TextOverflow.ellipsis),
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-class _InputW extends StatefulWidget {
-  final String type, placeholder, value, name;
+// ======================================================================
+// 底部表单组件区（完全保留你原来的逻辑，解决 const 警告）
+// ======================================================================
+class _InputWrapper extends StatefulWidget {
+  final String type;
+  final String placeholder;
+  final String value;
+  final String name;
   final _FormData? formData;
   final VoidCallback? onSubmit;
-  const _InputW({required this.type, required this.placeholder, required this.value, required this.name, this.formData, this.onSubmit});
+  const _InputWrapper({required this.type, required this.placeholder, required this.value, required this.name, this.formData, this.onSubmit});
   @override
-  State<_InputW> createState() => _InputWState();
+  State<_InputWrapper> createState() => _InputWrapperState();
 }
 
-class _InputWState extends State<_InputW> {
-  late TextEditingController _ctrl;
-  bool _checked = false;
+class _InputWrapperState extends State<_InputWrapper> {
+  late TextEditingController _controller;
+  bool _isChecked = false;
   @override
   void initState() {
     super.initState();
-    _ctrl = TextEditingController(text: widget.value);
+    _controller = TextEditingController(text: widget.value);
     if (widget.formData != null && widget.name.isNotEmpty) {
-      if (widget.type == 'checkbox') { _checked = widget.value.isNotEmpty; widget.formData!.values[widget.name] = _checked ? widget.value : ''; }
-      else if (widget.type == 'radio') { _checked = widget.formData!.values[widget.name] == widget.value; }
+      if (widget.type == 'checkbox') { _isChecked = widget.value.isNotEmpty || widget.value == 'true'; widget.formData!.setValue(widget.name, _isChecked ? widget.value : ''); }
+      else if (widget.type == 'radio') { _isChecked = widget.formData!.values[widget.name] == widget.value; }
       else { widget.formData!.values[widget.name] = widget.value; }
     }
-    _ctrl.addListener(() { if (widget.formData != null && widget.name.isNotEmpty && !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) widget.formData!.values[widget.name] = _ctrl.text; });
-    widget.formData?.addListener(() { if (widget.type == 'radio' && mounted) setState(() => _checked = widget.formData!.values[widget.name] == widget.value); });
+    _controller.addListener(_onTextChanged);
+    widget.formData?.addListener(_onFormChanged);
   }
+  void _onTextChanged() {
+    if (widget.formData != null && widget.name.isNotEmpty && !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) {
+      widget.formData!.values[widget.name] = _controller.text;
+    }
+  }
+  void _onFormChanged() { if (widget.type == 'radio' && widget.formData != null && mounted) setState(() => _isChecked = widget.formData!.values[widget.name] == widget.value); }
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() { _controller.removeListener(_onTextChanged); _controller.dispose(); widget.formData?.removeListener(_onFormChanged); super.dispose(); }
+
   @override
   Widget build(BuildContext context) {
-    final deco = InputDecoration(hintText: widget.placeholder, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)));
     switch (widget.type) {
-      case 'text': case 'search': case 'email': case 'password': case 'url': case 'tel': case 'number': return SizedBox(height: 44, child: TextField(controller: _ctrl, obscureText: widget.type == 'password', decoration: deco));
-      case 'submit': return SizedBox(height: 44, child: ElevatedButton(onPressed: widget.onSubmit, style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), child: Text(widget.value.isNotEmpty ? widget.value : 'Submit')));
-      case 'checkbox': return Row(children: [Checkbox(value: _checked, onChanged: (v) { setState(() => _checked = v ?? false); widget.formData?.setValue(widget.name, _checked ? widget.value : ''); }), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name)]);
-      case 'radio': return GestureDetector(onTap: () => widget.formData?.setValue(widget.name, widget.value), child: Row(children: [Container(width: 22, height: 22, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _checked ? Colors.blue : Colors.grey, width: 2)), child: _checked ? const Center(child: CircleAvatar(radius: 6, backgroundColor: Colors.blue)) : null), const SizedBox(width: 8), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value)]));
-      default: return SizedBox(height: 44, child: TextField(controller: _ctrl, decoration: deco));
+      case 'text': case 'search': case 'email': case 'password': case 'url': case 'tel': case 'number': case 'date':
+        return TextField(controller: _controller, obscureText: widget.type == 'password', decoration: InputDecoration(hintText: widget.placeholder, contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12), border: OutlineInputBorder(borderRadius: BorderRadius.circular(4))));
+      case 'hidden': return const SizedBox.shrink();
+      case 'checkbox':
+        return Row(mainAxisSize: MainAxisSize.min, children: [ Checkbox(value: _isChecked, onChanged: (val) { setState(() => _isChecked = val ?? false); if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.setValue(widget.name, _isChecked ? widget.value : ''); }), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name), ]);
+      case 'radio':
+        return GestureDetector(onTap: () { if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.setValue(widget.name, widget.value); }, child: Padding(padding: const EdgeInsets.only(bottom: 4.0), child: Row(mainAxisSize: MainAxisSize.min, children: [ Container(width: 20, height: 20, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _isChecked ? Colors.blue : Colors.grey, width: 2)), child: _isChecked ? Center(child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.blue))) : null), const SizedBox(width: 8), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value), ])));
+      case 'submit':
+        return ElevatedButton(onPressed: widget.onSubmit, style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white), child: Text(widget.value.isNotEmpty ? widget.value : 'Submit'));
+      case 'reset':
+        return ElevatedButton(onPressed: () { widget.formData?.values.clear(); _controller.clear(); setState(() => _isChecked = false); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white), child: Text(widget.value.isNotEmpty ? widget.value : 'Reset'));
+      case 'button': default:
+        return ElevatedButton(onPressed: () {}, style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, side: const BorderSide(color: Colors.grey)), child: Text(widget.value.isNotEmpty ? widget.value : (widget.type.toUpperCase())));
     }
   }
 }
 
-class _BtnW extends StatelessWidget {
-  final String type, text;
-  final _FormData? formData;
-  final VoidCallback? onSubmit;
-  const _BtnW({required this.type, required this.text, this.formData, this.onSubmit});
+class _FormButtonWrapper extends StatelessWidget {
+  final String type; final String text; final _FormData? formData; final VoidCallback? onSubmit;
+  const _FormButtonWrapper({required this.type, required this.text, this.formData, this.onSubmit});
   @override
   Widget build(BuildContext context) {
-    final style = ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)));
-    switch (type) {
-      case 'submit': return ElevatedButton(onPressed: onSubmit, style: style.copyWith(backgroundColor: WidgetStateProperty.all(Colors.blue), foregroundColor: WidgetStateProperty.all(Colors.white)), child: Text(text.isEmpty ? 'Submit' : text));
-      case 'reset': return ElevatedButton(onPressed: () => formData?.values.clear(), style: style.copyWith(backgroundColor: WidgetStateProperty.all(Colors.grey), foregroundColor: WidgetStateProperty.all(Colors.white)), child: Text(text.isEmpty ? 'Reset' : text));
-      default: return ElevatedButton(onPressed: () {}, style: style, child: Text(text.isEmpty ? 'Button' : text));
-    }
+    if (type == 'submit') return ElevatedButton(onPressed: onSubmit, style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white), child: Text(text.isEmpty ? 'Submit' : text));
+    if (type == 'reset') return ElevatedButton(onPressed: () => formData?.values.clear(), style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white), child: Text(text.isEmpty ? 'Reset' : text));
+    return ElevatedButton(onPressed: () {}, style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, side: const BorderSide(color: Colors.grey)), child: Text(text.isEmpty ? 'Button' : text));
   }
 }
 
-class _SelW extends StatefulWidget {
-  final List<MapEntry<String, String>> items;
-  final String name;
-  final _FormData? formData;
-  const _SelW({required this.items, required this.name, this.formData});
-  @override
-  State<_SelW> createState() => _SelWState();
+class _SelectWrapper extends StatefulWidget {
+  final List<MapEntry<String, String>> items; final String name; final _FormData? formData;
+  const _SelectWrapper({required this.items, required this.name, this.formData});
+  @override State<_SelectWrapper> createState() => _SelectWrapperState();
 }
-
-class _SelWState extends State<_SelW> {
-  String? _val;
-  @override
-  void initState() { super.initState(); if (widget.items.isNotEmpty) _val = widget.items.first.value; if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _val ?? ''; }
-  @override
-  Widget build(BuildContext context) {
-    return DropdownButtonFormField<String>(value: _val, items: widget.items.map((item) => DropdownMenuItem<String>(value: item.value, child: Text(item.key))).toList(), onChanged: (String? newValue) { setState(() { _val = newValue; if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = newValue ?? ''; }); });
+class _SelectWrapperState extends State<_SelectWrapper> {
+  String? _selectedValue;
+  @override void initState() { super.initState(); if (widget.items.isNotEmpty) _selectedValue = widget.items.first.value; if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _selectedValue ?? ''; }
+  @override Widget build(BuildContext context) {
+    return DropdownButtonFormField<String>(
+      initialValue: widget.items.any((e) => e.value == _selectedValue) ? _selectedValue : null,
+      decoration: InputDecoration(border: const OutlineInputBorder(), contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
+      items: widget.items.map((item) => DropdownMenuItem<String>(value: item.value, child: Text(item.key))).toList(),
+      onChanged: (val) { setState(() => _selectedValue = val); if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = val ?? ''; },
+    );
   }
 }
 
-class _TxtW extends StatefulWidget {
-  final String name, placeholder, value;
-  final _FormData? formData;
-  const _TxtW({required this.name, required this.placeholder, required this.value, this.formData});
-  @override
-  State<_TxtW> createState() => _TxtWState();
+class _TextareaWrapper extends StatefulWidget {
+  final String name; final String placeholder; final String value; final _FormData? formData;
+  const _TextareaWrapper({required this.name, required this.placeholder, required this.value, this.formData});
+  @override State<_TextareaWrapper> createState() => _TextareaWrapperState();
 }
-
-class _TxtWState extends State<_TxtW> {
-  late TextEditingController _ctrl;
-  @override
-  void initState() { super.initState(); _ctrl = TextEditingController(text: widget.value); if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = widget.value; _ctrl.addListener(() { if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _ctrl.text; }); }
-  @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
-  @override
-  Widget build(BuildContext context) {
-    return TextField(controller: _ctrl, maxLines: 3, decoration: InputDecoration(hintText: widget.placeholder, alignLabelWithHint: true, border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)), contentPadding: const EdgeInsets.all(12)));
-  }
+class _TextareaWrapperState extends State<_TextareaWrapper> {
+  late TextEditingController _controller;
+  @override void initState() { super.initState(); _controller = TextEditingController(text: widget.value); if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = widget.value; _controller.addListener(() { if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _controller.text; }); }
+  @override void dispose() { _controller.dispose(); super.dispose(); }
+  @override Widget build(BuildContext context) => TextField(controller: _controller, maxLines: 4, decoration: InputDecoration(hintText: widget.placeholder, border: const OutlineInputBorder()));
 }
