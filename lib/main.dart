@@ -27,7 +27,7 @@ class MyApp extends StatelessWidget {
 }
 
 // ======================================================================
-// CSS 解析器
+// 增强版 CSS 解析器
 // ======================================================================
 class _MobileCssParser {
   final List<_CssRule> _rules = [];
@@ -35,10 +35,11 @@ class _MobileCssParser {
   String _baseUrl = '';
   double _viewportWidth = 375;
   double _viewportHeight = 812;
+  double _devicePixelRatio = 2.0;
 
   static final Map<String, Map<String, String>> _userAgentStyles = {
     '*': {'margin': '0', 'padding': '0', 'box-sizing': 'border-box'},
-    'html': {'font-size': '14px'},
+    'html': {'font-size': '14px', 'scroll-behavior': 'smooth'},
     'body': {'font-family': '-apple-system, sans-serif', 'line-height': '1.5'},
     'div': {'display': 'block'},
     'span': {'display': 'inline'},
@@ -46,7 +47,7 @@ class _MobileCssParser {
     'h1': {'display': 'block', 'font-size': '2em', 'font-weight': 'bold'},
     'h2': {'display': 'block', 'font-size': '1.5em', 'font-weight': 'bold'},
     'a': {'text-decoration': 'none', 'color': '#007aff'},
-    'img': {'max-width': '100%', 'height': 'auto'},
+    'img, video': {'max-width': '100%', 'height': 'auto'},
     'button': {'min-height': '44px', 'min-width': '44px', 'padding': '12px 20px', 'font-size': '16px', 'border-radius': '8px'},
     'input': {'min-height': '44px', 'padding': '8px 12px', 'font-size': '16px'},
   };
@@ -66,6 +67,7 @@ class _MobileCssParser {
   void setViewport({required double width, required double height, double pixelRatio = 2.0}) {
     _viewportWidth = width;
     _viewportHeight = height;
+    _devicePixelRatio = pixelRatio;
   }
 
   void parseViewportMeta(String html) {
@@ -136,7 +138,7 @@ class _MobileCssParser {
   void _parseCssText(String css, CssSource source) {
     final clean = css.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
     _extractMediaQueries(clean);
-    final normal = clean.replaceAll(RegExp(r'@media[^{]+\{[^}]*\}', dotAll: true), '');
+    final normal = clean.replaceAll(RegExp(r'@media[^{]+\{([^{}]*(\{[^{}]*\}[^{}]*)*)\}', dotAll: true), '');
     for (final b in RegExp(r'([^{]+)\{([^}]*)\}').allMatches(normal)) {
       final sel = b.group(1)?.trim() ?? '';
       final props = _parseProps(b.group(2)?.trim() ?? '');
@@ -151,8 +153,8 @@ class _MobileCssParser {
   }
 
   void _extractMediaQueries(String css) {
-    for (final m in RegExp(r'@media\s+([^{]+)\{([^}]*)\}', dotAll: true).allMatches(css)) {
-      final q = _MediaQuery(condition: m.group(1)?.trim() ?? '');
+    for (final m in RegExp(r'@media\s+([^{]+)\{([^{}]*(\{[^{}]*\}[^{}]*)*)\}', dotAll: true).allMatches(css)) {
+      final q = _MediaQuery(condition: m.group(1)?.trim() ?? '', devicePixelRatio: _devicePixelRatio);
       for (final b in RegExp(r'([^{]+)\{([^}]*)\}').allMatches(m.group(2)?.trim() ?? '')) {
         final sel = b.group(1)?.trim() ?? '';
         final props = _parseProps(b.group(2)?.trim() ?? '');
@@ -203,6 +205,11 @@ class _MobileCssParser {
     if (_userAgentStyles.containsKey(tag)) {
       styles.addAll(_userAgentStyles[tag]!);
     }
+    // 匹配 img, video 组合选择器
+    if (_userAgentStyles.containsKey('img, video') && (tag == 'img' || tag == 'video')) {
+      styles.addAll(_userAgentStyles['img, video']!);
+    }
+    
     for (final r in _rules) {
       if (_matches(element, r.selector)) {
         styles.addAll(r.properties);
@@ -220,6 +227,12 @@ class _MobileCssParser {
   }
 
   String _resolveValue(String v) {
+    // 新增：兼容 calc(100% - 30px)
+    v = v.replaceAllMapped(RegExp(r'calc\(\s*100%\s*-\s*([\d.]+)px\s*\)'), (m) {
+      final px = double.parse(m.group(1)!);
+      return '${(_viewportWidth - px).round()}px';
+    });
+    
     v = v.replaceAllMapped(RegExp(r'([\d.]+)vw'), (m) => '${(double.parse(m.group(1)!) / 100 * _viewportWidth).round()}px');
     v = v.replaceAllMapped(RegExp(r'([\d.]+)vh'), (m) => '${(double.parse(m.group(1)!) / 100 * _viewportHeight).round()}px');
     v = v.replaceAllMapped(RegExp(r'([\d.]+)rem'), (m) => '${(double.parse(m.group(1)!) * 14).round()}px');
@@ -239,18 +252,8 @@ class _MobileCssParser {
     if (sel.startsWith('#')) {
       return el.attributes['id'] == sel.substring(1);
     }
-    return sel.split(RegExp(r'(?=[.#])')).every((p) {
-      if (p.isEmpty) {
-        return true;
-      }
-      if (p.startsWith('.')) {
-        return el.classes.contains(p.substring(1));
-      }
-      if (p.startsWith('#')) {
-        return el.attributes['id'] == p.substring(1);
-      }
-      return p == el.localName;
-    });
+    // 处理逗号分隔的多重选择器 (如 img, video)
+    return sel.split(',').any((s) => s.trim() == el.localName);
   }
 }
 
@@ -265,9 +268,10 @@ class _CssRule {
 
 class _MediaQuery {
   final String condition;
+  final double devicePixelRatio;
   final List<_CssRule> rules = [];
 
-  _MediaQuery({required this.condition});
+  _MediaQuery({required this.condition, required this.devicePixelRatio});
 
   bool matches(double sw, double sh) {
     final mw = RegExp(r'max-width:\s*(\d+)px').firstMatch(condition);
@@ -284,6 +288,17 @@ class _MediaQuery {
     if (condition.contains('portrait')) {
       return sw <= sh;
     }
+    
+    // 新增：兼容高清屏媒体查询 -webkit-min-device-pixel-ratio 和 min-resolution
+    final ratioMatch = RegExp(r'(-webkit-min-device-pixel-ratio|min-resolution):\s*([\d.]+)').firstMatch(condition);
+    if (ratioMatch != null) {
+      double requiredRatio = double.parse(ratioMatch.group(2)!);
+      if (ratioMatch.group(1)!.contains('resolution')) {
+        requiredRatio = requiredRatio / 96.0; // 192dpi 约等于 2x
+      }
+      return devicePixelRatio >= requiredRatio;
+    }
+    
     return false;
   }
 }
@@ -317,7 +332,7 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   final _urlCtrl = TextEditingController();
   String _html =
-      '<meta name="viewport" content="width=device-width"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;line-height:1.5}.container{display:flex;flex-direction:column;gap:16px;padding:16px;max-width:480px;margin:0 auto}.flex-row{display:flex;flex-wrap:wrap;gap:10px}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{background:white;border-radius:8px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,0.1)}.btn{padding:12px 20px;min-height:44px;font-size:16px;border-radius:8px;background:#007aff;color:white;border:none}img{max-width:100%;height:auto}a{text-decoration:none;color:#007aff}</style><div class="container"><h1>移动端演示</h1><div class="flex-row"><div class="card">Flex 1</div><div class="card">Flex 2</div></div><div class="grid-2"><div class="card">Grid 1</div><div class="card">Grid 2</div></div><form method="get" action="/search"><div class="flex-row"><input type="text" name="q" placeholder="搜索..." style="flex:1"><button type="submit" class="btn">搜索</button></div></form></div>';
+      '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><style>*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}body{font-family:-apple-system,sans-serif;line-height:1.5}.container{display:flex;flex-direction:column;justify-content:space-between;align-items:center;gap:16px;padding:16px;max-width:480px;margin:0 auto}.flex-row{display:flex;flex-wrap:wrap;gap:10px}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{background:white;border-radius:8px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,0.1)}.btn{padding:12px 20px;min-height:44px;font-size:16px;border-radius:8px;background:#007aff;color:white;border:none;display:inline-block}.btn:active{opacity:0.7;transform:scale(0.98)}.list-item{padding:12px 15px;border-bottom:1px solid #eee;background:white}.scroll-x{overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}.scroll-x .item{display:inline-block;width:120px;margin-right:10px;background:#eee;padding:20px 0;text-align:center;border-radius:8px}img{max-width:100%;height:auto}a{text-decoration:none;color:#007aff}h1{font-size:5vw}p{font-size:0.875rem}.box-calc{width:calc(100% - 30px);height:50px;background:lightblue;margin:10px auto}</style><div class="container"><h1>增强CSS兼容演示</h1><div class="box-calc">支持 calc()</div><div class="grid-2"><div class="card">Grid 1</div><div class="card">Grid 2</div></div><button class="btn">点击缩放反馈</button><div class="list-item">支持底部边框 1</div><div class="list-item">支持底部边框 2</div><div class="scroll-x"><div class="item">横滑1</div><div class="item">横滑2</div><div class="item">横滑3</div><div class="item">横滑4</div></div><form method="get" action="/search"><div class="flex-row"><input type="text" name="q" placeholder="搜索..." style="flex:1"><button type="submit" class="btn">搜索</button></div></form></div>';
   bool _loading = false;
   String _url = '';
   final Map<int, _FormData> _forms = {};
@@ -351,7 +366,7 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _update(String html, String baseUrl) async {
     _css.setBaseUrl(baseUrl);
     final s = MediaQuery.of(context).size;
-    _css.setViewport(width: s.width, height: s.height);
+    _css.setViewport(width: s.width, height: s.height, pixelRatio: MediaQuery.of(context).devicePixelRatio);
     await _css.parseFromHtml(html, client: _client, screenWidth: s.width);
     if (mounted) {
       setState(() {});
@@ -362,7 +377,6 @@ class _MyHomePageState extends State<MyHomePage> {
     dom.Node? n = el.parent;
     while (n != null) {
       if (n is dom.Element && n.localName == 'form') {
-        // 提取局部变量，强制保证循环内的类型推导
         final form = n;
         return _forms.putIfAbsent(form.hashCode, () => _FormData(
               method: form.attributes['method']?.toLowerCase() ?? 'get',
@@ -486,52 +500,92 @@ class _MyHomePageState extends State<MyHomePage> {
     return _styled(el, st);
   }
 
+  // 新增：统一处理交互特效、透明度、形变和溢出滚动
+  Widget _wrapWithEffects(Widget child, Map<String, String> st) {
+    final opacityVal = st['opacity'];
+    if (opacityVal != null) {
+      final opacity = double.tryParse(opacityVal);
+      if (opacity != null && opacity < 1.0) {
+        child = Opacity(opacity: opacity, child: child);
+      }
+    }
+
+    final transformStr = st['transform'] ?? '';
+    final scaleMatch = RegExp(r'scale\(([\d.]+)\)').firstMatch(transformStr);
+    if (scaleMatch != null) {
+      final scale = double.parse(scaleMatch.group(1)!);
+      child = Transform.scale(scale: scale, child: child);
+    }
+
+    if (st['overflow-x'] == 'auto') {
+      child = SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: child,
+      );
+    }
+
+    return child;
+  }
+
   Widget _flex(dom.Element el, Map<String, String> st) {
     final dir = st['flex-direction'] == 'column' ? Axis.vertical : Axis.horizontal;
     final wrap = st['flex-wrap'] == 'wrap';
     final gap = _px(st['gap']);
-    return Container(
+    
+    Widget child = wrap
+        ? Wrap(
+            spacing: gap ?? 8,
+            runSpacing: gap ?? 8,
+            children: el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList())
+        : Flex(
+            direction: dir,
+            mainAxisAlignment: _main(st['justify-content']),
+            crossAxisAlignment: _cross(st['align-items']),
+            children: _gap(el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList(), gap, dir));
+
+    child = Container(
       margin: _insets(st['margin']),
       padding: _insets(st['padding']),
+      constraints: BoxConstraints(maxWidth: _px(st['max-width']) ?? double.infinity),
       decoration: BoxDecoration(
           color: _color(st['background-color']),
           borderRadius: _radius(st['border-radius']),
-          boxShadow: _shadow(st['box-shadow'])),
-      child: wrap
-          ? Wrap(
-              spacing: gap ?? 8,
-              runSpacing: gap ?? 8,
-              children: el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList())
-          : Flex(
-              direction: dir,
-              mainAxisAlignment: _main(st['justify-content']),
-              crossAxisAlignment: _cross(st['align-items']),
-              children: _gap(el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList(), gap, dir)),
+          boxShadow: _shadow(st['box-shadow']),
+          border: _border(st['border-bottom'])),
+      child: child,
     );
+    
+    return _wrapWithEffects(child, st);
   }
 
   Widget _grid(dom.Element el, Map<String, String> st) {
     final cols = st['grid-template-columns']?.split(' ').where((s) => s.trim().isNotEmpty).length ?? 1;
     final gap = _px(st['gap']);
     final p = _insets(st['padding']);
-    return Container(
+    
+    Widget child = LayoutBuilder(builder: (_, c) {
+      final w = (c.maxWidth - p.horizontal - (cols - 1) * (gap ?? 8)) / cols;
+      return Wrap(
+        spacing: gap ?? 8,
+        runSpacing: gap ?? 8,
+        children: el.children.map((ch) => SizedBox(width: w, child: HtmlWidget(ch.outerHtml, customWidgetBuilder: _buildCustom))).toList(),
+      );
+    });
+
+    child = Container(
       margin: _insets(st['margin']),
       padding: p,
+      constraints: BoxConstraints(maxWidth: _px(st['max-width']) ?? double.infinity),
       decoration: BoxDecoration(color: _color(st['background-color']), borderRadius: _radius(st['border-radius'])),
-      child: LayoutBuilder(builder: (_, c) {
-        final w = (c.maxWidth - p.horizontal - (cols - 1) * (gap ?? 8)) / cols;
-        return Wrap(
-          spacing: gap ?? 8,
-          runSpacing: gap ?? 8,
-          children: el.children.map((ch) => SizedBox(width: w, child: HtmlWidget(ch.outerHtml, customWidgetBuilder: _buildCustom))).toList(),
-        );
-      }),
+      child: child,
     );
+    
+    return _wrapWithEffects(child, st);
   }
 
   Widget _img(dom.Element el, Map<String, String> st) {
     final src = el.attributes['src'] ?? '';
-    return Container(
+    Widget child = Container(
       margin: _insets(st['margin']),
       child: src.isNotEmpty
           ? ClipRRect(
@@ -539,13 +593,14 @@ class _MyHomePageState extends State<MyHomePage> {
               child: Image.network(src, fit: BoxFit.contain, errorBuilder: (_, __, ___) => _placeholder()))
           : _placeholder(),
     );
+    return _wrapWithEffects(child, st);
   }
 
   Widget _placeholder() => Container(height: 200, color: Colors.grey[300], child: const Center(child: Icon(Icons.broken_image)));
 
   Widget _link(dom.Element el, Map<String, String> st) {
     final href = el.attributes['href'] ?? '';
-    return GestureDetector(
+    Widget child = GestureDetector(
       onTap: () {
         if (href.isNotEmpty) {
           _go(_resolve(href));
@@ -562,6 +617,7 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
       ),
     );
+    return _wrapWithEffects(child, st);
   }
 
   Widget? _styled(dom.Element el, Map<String, String> st) {
@@ -569,14 +625,30 @@ class _MyHomePageState extends State<MyHomePage> {
     final p = _insets(st['padding']);
     final m = _insets(st['margin']);
     final r = _radius(st['border-radius']);
-    if (bg != null || p != EdgeInsets.zero || m != EdgeInsets.zero || r != null) {
-      return Container(
-          margin: m,
-          padding: p,
-          decoration: BoxDecoration(color: bg, borderRadius: r),
-          child: HtmlWidget(el.outerHtml, customWidgetBuilder: _buildCustom));
+    final border = _border(st['border-bottom']);
+    final maxWidth = _px(st['max-width']);
+    final noWrap = st['white-space'] == 'nowrap';
+
+    Widget child = HtmlWidget(
+      el.outerHtml,
+      customWidgetBuilder: _buildCustom,
+      textStyle: TextStyle(
+        fontSize: 14, 
+        overflow: noWrap ? TextOverflow.ellipsis : null
+      ),
+    );
+
+    if (bg != null || p != EdgeInsets.zero || m != EdgeInsets.zero || r != null || border != null || maxWidth != null) {
+      child = Container(
+        margin: m,
+        padding: p,
+        constraints: BoxConstraints(maxWidth: maxWidth ?? double.infinity),
+        decoration: BoxDecoration(color: bg, borderRadius: r, border: border),
+        child: child,
+      );
     }
-    return null;
+    
+    return _wrapWithEffects(child, st);
   }
 
   // ========== 表单 ==========
@@ -594,17 +666,20 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Widget _button(dom.Element el) {
     final fd = _formOf(el);
-    return _BtnW(
-      type: el.attributes['type'] ?? 'button',
-      text: el.innerHtml,
-      formData: fd,
-      onSubmit: fd != null ? () => _submit(fd) : null,
+    final st = _css.getComputedStyle(el);
+    return _wrapWithEffects(
+      _BtnW(
+        type: el.attributes['type'] ?? 'button',
+        text: el.innerHtml,
+        formData: fd,
+        onSubmit: fd != null ? () => _submit(fd) : null,
+      ),
+      st
     );
   }
 
   Widget _select(dom.Element el) {
     final fd = _formOf(el);
-    // 修复 609, 610 行无效空安全操作符警告：Element 本身非空
     final items = el.getElementsByTagName('option').map((o) {
       final val = o.attributes['value'];
       final text = o.text.trim();
@@ -623,7 +698,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  // ========== 辅助解析 ==========
+  // ========== 辅助解析增强 ==========
   List<Widget> _gap(List<Widget> c, double? g, Axis d) {
     if (g == null || c.isEmpty) {
       return c;
@@ -675,6 +750,18 @@ class _MyHomePageState extends State<MyHomePage> {
   BorderRadius? _radius(String? v) {
     final r = _px(v);
     return r != null && r > 0 ? BorderRadius.circular(r) : null;
+  }
+
+  // 新增：解析边框 (如 border-bottom)
+  Border? _border(String? v) {
+    if (v == null || v == 'none') {
+      return null;
+    }
+    final m = RegExp(r'([\d.]+)px\s+solid\s+(#[0-9a-fA-F]{3,6})').firstMatch(v);
+    if (m != null) {
+      return Border(bottom: BorderSide(color: _color(m.group(2))!, width: double.parse(m.group(1)!)));
+    }
+    return null;
   }
 
   List<BoxShadow>? _shadow(String? v) {
@@ -774,7 +861,7 @@ class _MyHomePageState extends State<MyHomePage> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             color: Colors.grey[100],
-            child: Text(_url.isNotEmpty ? _url : '就绪', style: TextStyle(fontSize: 11, color: Colors.grey[600]), overflow: TextOverflow.ellipsis),
+            child: Text(_url.isNotEmpty ? _url : '就绪', style: const TextStyle(fontSize: 11, color: Colors.grey600), overflow: TextOverflow.ellipsis),
           ),
         ],
       ),
@@ -959,7 +1046,6 @@ class _SelWState extends State<_SelW> {
   }
 }
 
-// 补充缺失的 _TxtW 组件
 class _TxtW extends StatefulWidget {
   final String name, placeholder, value;
   final _FormData? formData;
