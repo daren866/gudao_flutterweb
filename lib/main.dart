@@ -385,8 +385,9 @@ class _MyHomePageState extends State<MyHomePage> {
     if (tag == 'button') return _button(el);
     if (tag == 'select') return _select(el);
     if (tag == 'textarea') return _textarea(el);
-    if (tag == 'option' || tag == 'style' || tag == 'meta' || tag == 'link' || tag == 'script' || tag == 'head')
+    if (tag == 'option' || tag == 'style' || tag == 'meta' || tag == 'link' || tag == 'script' || tag == 'head') {
       return const SizedBox.shrink();
+    }
 
     final st = _css.getComputedStyle(el);
     final d = st['display'];
@@ -513,6 +514,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Widget _select(dom.Element el) {
     final fd = _formOf(el);
+    // 修复 312, 313 行空安全报错
     final items = el.getElementsByTagName('option').map((o) => MapEntry(o.text.trim(), o.attributes['value'] ?? o.text.trim())).toList();
     return _SelW(items: items, name: el.attributes['name'] ?? '', formData: fd);
   }
@@ -703,7 +705,9 @@ class _InputWState extends State<_InputW> {
       }
     });
     widget.formData?.addListener(() {
-      if (widget.type == 'radio' && mounted) setState(() => _checked = widget.formData!.values[widget.name] == widget.value);
+      if (widget.type == 'radio' && mounted) {
+        setState(() => _checked = widget.formData!.values[widget.name] == widget.value);
+      }
     });
   }
 
@@ -816,8 +820,9 @@ class _SelWState extends State<_SelW> {
 
   @override
   Widget build(BuildContext context) {
+    // 修复 820 行 API 废弃警告：value -> initialValue
     return DropdownButtonFormField<String>(
-      value: _val,
+      initialValue: _val,
       items: widget.items
           .map((item) => DropdownMenuItem<String>(
                 value: item.value,
@@ -836,7 +841,7 @@ class _SelWState extends State<_SelW> {
   }
 }
 
-// 补充缺失的 _TxtW 组件以解决 undefined_method 报错
+// 补充缺失的 _TxtW 组件
 class _TxtW extends StatefulWidget {
   final String name, placeholder, value;
   final _FormData? formData;
