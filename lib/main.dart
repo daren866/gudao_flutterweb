@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:html/dom.dart' as dom;
-import 'package:html/parser.dart' as html_parser;
+import 'package:html/parser.dart' as html_parser';
+import 'package:csslib/csslib.dart' as css;
 
 void main() {
   runApp(const MyApp());
@@ -27,7 +28,7 @@ class MyApp extends StatelessWidget {
 }
 
 // ======================================================================
-// 增强版 CSS 解析器
+// 增强版 CSS 解析器（使用 csslib）
 // ======================================================================
 class _MobileCssParser {
   final List<_CssRule> _rules = [];
@@ -135,35 +136,48 @@ class _MobileCssParser {
     return '${uri.scheme}://${uri.host}${i > 0 ? uri.path.substring(0, i) : ''}/$url';
   }
 
-  void _parseCssText(String css, CssSource source) {
-    final clean = css.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
-    _extractMediaQueries(clean);
-    final normal = clean.replaceAll(RegExp(r'@media[^{]+\{([^{}]*(\{[^{}]*\}[^{}]*)*\}', dotAll: true), '');
-    for (final b in RegExp(r'([^{]+)\{([^}]*)\}').allMatches(normal)) {
-      final sel = b.group(1)?.trim() ?? '';
-      final props = _parseProps(b.group(2)?.trim() ?? '');
-      if (props.isEmpty) {
-        continue;
-      }
-      final cleanSel = sel.replaceAll(RegExp(r':(active|hover|focus|visited)'), '');
-      for (final s in cleanSel.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty)) {
-        _rules.add(_CssRule(selector: s, properties: Map.from(props), specificity: _spec(s), source: source));
-      }
-    }
-  }
-
-  void _extractMediaQueries(String css) {
-    for (final m in RegExp(r'@media\s+([^{]+)\{([^{}]*(\{[^{}]*\}[^{}]*)*\}', dotAll: true).allMatches(css)) {
-      // 修复：传入 _devicePixelRatio 给自定义的 _MediaQuery 类
-      final q = _MediaQuery(condition: m.group(1)?.trim() ?? '', devicePixelRatio: _devicePixelRatio);
-      for (final b in RegExp(r'([^{]+)\{([^}]*)\}').allMatches(m.group(2)?.trim() ?? '')) {
-        final sel = b.group(1)?.trim() ?? '';
-        final props = _parseProps(b.group(2)?.trim() ?? '');
-        if (sel.isNotEmpty && props.isNotEmpty) {
-          q.rules.add(_CssRule(selector: sel, properties: props, specificity: _spec(sel), source: CssSource.styleTag));
+  // 使用 csslib 解析 CSS
+  void _parseCssText(String cssText, CssSource source) {
+    try {
+      final sheet = css.parse(cssText);
+      for (final rule in sheet.rules) {
+        if (rule is css.CssStyleRule) {
+          final selector = rule.selector.toString();
+          final props = <String, String>{};
+          for (final declaration in rule.declarations) {
+            props[declaration.property] = declaration.value;
+          }
+          _rules.add(_CssRule(
+            selector: selector,
+            properties: props,
+            specificity: _spec(selector),
+            source: source,
+          ));
+        } else if (rule is css.CssMediaRule) {
+          // 处理媒体查询
+          final condition = rule.conditionText;
+          final mediaQuery = _MediaQuery(condition: condition, devicePixelRatio: _devicePixelRatio);
+          for (final innerRule in rule.rules) {
+            if (innerRule is css.CssStyleRule) {
+              final selector = innerRule.selector.toString();
+              final props = <String, String>{};
+              for (final declaration in innerRule.declarations) {
+                props[declaration.property] = declaration.value;
+              }
+              mediaQuery.rules.add(_CssRule(
+                selector: selector,
+                properties: props,
+                specificity: _spec(selector),
+                source: source,
+              ));
+            }
+          }
+          _mediaQueries.add(mediaQuery);
         }
       }
-      _mediaQueries.add(q);
+    } catch (e) {
+      // 忽略解析错误，继续使用 userAgent 样式
+      print('CSS 解析错误: $e');
     }
   }
 
@@ -188,40 +202,22 @@ class _MobileCssParser {
     s += '#'.allMatches(sel).length * 10000;
     s += '.'.allMatches(sel).length * 100;
     s += '['.allMatches(sel).length * 100;
-    if (RegExp(r'^[a-zA-Z]+').hasMatch(sel)) {
-      s += 1;
-    }
+    if (RegExp(r'^[a-zA-Z]+').hasMatch(sel)) s += 1;
     return s;
   }
 
   Map<String, String> getComputedStyle(dom.Element element) {
-    if (_styleCache.containsKey(element)) {
-      return Map.from(_styleCache[element]!);
-    }
+    if (_styleCache.containsKey(element)) return Map.from(_styleCache[element]!);
     final styles = <String, String>{};
-    if (_userAgentStyles.containsKey('*')) {
-      styles.addAll(_userAgentStyles['*']!);
-    }
+    if (_userAgentStyles.containsKey('*')) styles.addAll(_userAgentStyles['*']!);
     final tag = element.localName?.toLowerCase() ?? '';
-    if (_userAgentStyles.containsKey(tag)) {
-      styles.addAll(_userAgentStyles[tag]!);
-    }
-    if (_userAgentStyles.containsKey('img, video') && (tag == 'img' || tag == 'video')) {
-      styles.addAll(_userAgentStyles['img, video']!);
-    }
-    
+    if (_userAgentStyles.containsKey(tag)) styles.addAll(_userAgentStyles[tag]!);
     for (final r in _rules) {
-      if (_matches(element, r.selector)) {
-        styles.addAll(r.properties);
-      }
+      if (_matches(element, r.selector)) styles.addAll(r.properties);
     }
     final inline = element.attributes['style'];
-    if (inline != null && inline.isNotEmpty) {
-      styles.addAll(_parseProps(inline));
-    }
-    styles.forEach((k, v) {
-      styles[k] = _resolveValue(v);
-    });
+    if (inline != null && inline.isNotEmpty) styles.addAll(_parseProps(inline));
+    styles.forEach((k, v) => styles[k] = _resolveValue(v));
     _styleCache[element] = Map.from(styles);
     return styles;
   }
@@ -238,18 +234,10 @@ class _MobileCssParser {
   }
 
   bool _matches(dom.Element el, String sel) {
-    if (sel == '*' || sel == 'body') {
-      return true;
-    }
-    if (sel == el.localName) {
-      return true;
-    }
-    if (sel.startsWith('.')) {
-      return el.classes.contains(sel.substring(1));
-    }
-    if (sel.startsWith('#')) {
-      return el.attributes['id'] == sel.substring(1);
-    }
+    if (sel == '*' || sel == 'body') return true;
+    if (sel == el.localName) return true;
+    if (sel.startsWith('.')) return el.classes.contains(sel.substring(1));
+    if (sel.startsWith('#')) return el.attributes['id'] == sel.substring(1);
     return sel.split(',').any((s) => s.trim() == el.localName);
   }
 }
@@ -263,7 +251,6 @@ class _CssRule {
   _CssRule({required this.selector, required this.properties, required this.specificity, required this.source});
 }
 
-// 修复：增加 devicePixelRatio 字段，防止访问 Flutter 的 context 报错
 class _MediaQuery {
   final String condition;
   final double devicePixelRatio;
@@ -273,19 +260,11 @@ class _MediaQuery {
 
   bool matches(double sw, double sh) {
     final mw = RegExp(r'max-width:\s*(\d+)px').firstMatch(condition);
-    if (mw != null) {
-      return sw <= double.parse(mw.group(1)!);
-    }
+    if (mw != null) return sw <= double.parse(mw.group(1)!);
     final miw = RegExp(r'min-width:\s*(\d+)px').firstMatch(condition);
-    if (miw != null) {
-      return sw >= double.parse(miw.group(1)!);
-    }
-    if (condition.contains('landscape')) {
-      return sw > sh;
-    }
-    if (condition.contains('portrait')) {
-      return sw <= sh;
-    }
+    if (miw != null) return sw >= double.parse(miw.group(1)!);
+    if (condition.contains('landscape')) return sw > sh;
+    if (condition.contains('portrait')) return sw <= sh;
     
     final ratioMatch = RegExp(r'(-webkit-min-device-pixel-ratio|min-resolution):\s*([\d.]+)').firstMatch(condition);
     if (ratioMatch != null) {
@@ -510,7 +489,6 @@ class _MyHomePageState extends State<MyHomePage> {
         children: el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList(),
       );
     } else {
-      // 修复：将 .toList() 放到 map 后面，闭合 Flex() 的括号
       child = Flex(
         direction: dir,
         mainAxisAlignment: _main(st['justify-content']),
@@ -551,7 +529,6 @@ class _MyHomePageState extends State<MyHomePage> {
         decoration: BoxDecoration(color: _color(st['background-color']), borderRadius: _radius(st['border-radius'])),
         child: LayoutBuilder(
           builder: (_, c) {
-            // 修复：使用 MediaQuery.of(context) 替代不存在的 _viewportWidth
             final usableWidth = (c.maxWidth.isFinite ? c.maxWidth : MediaQuery.of(context).size.width) - p.horizontal - (cols - 1) * (gap ?? 8);
             final w = (usableWidth / cols).clamp(0.0, double.infinity);
             return Wrap(
@@ -794,7 +771,6 @@ class _MyHomePageState extends State<MyHomePage> {
     }
     final m = RegExp(r'([\d.]+)px\s+solid\s+(#[0-9a-fA-F]{3,6})').firstMatch(v);
     if (m != null) {
-      // 修复：补全缺失的两个右括号
       return Border(bottom: BorderSide(color: _color(m.group(2))!, width: double.parse(m.group(1)!)));
     }
     return null;
