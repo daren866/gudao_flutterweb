@@ -26,7 +26,7 @@ class MyApp extends StatelessWidget {
 }
 
 // ======================================================================
-// 纯 Dart 实现的安全 CSS 解析器 (彻底抛弃正则引起的 FormatException)
+// 纯 Dart 实现的安全 CSS 解析器
 // ======================================================================
 class _MobileCssParser {
   final List<_CssRule> _rules = [];
@@ -124,12 +124,8 @@ class _MobileCssParser {
     return '${uri.scheme}://${uri.host}${i > 0 ? uri.path.substring(0, i) : ''}/$url';
   }
 
-  // 核心：绝对安全的 CSS 文本解析（不使用复杂的正则分组，避免 FormatException）
   void _parseCssText(String cssText, CssSource source) {
-    // 1. 移除注释 /* ... */
     String cleanCss = cssText.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
-    
-    // 2. 提取并处理媒体查询 @media { ... }
     final mediaRegex = RegExp(r'@media\s*([^{]+)\{([\s\S]*?)\}\s*\}', caseSensitive: false);
     for (final mediaMatch in mediaRegex.allMatches(cleanCss)) {
       final condition = mediaMatch.group(1)?.trim() ?? '';
@@ -139,12 +135,9 @@ class _MobileCssParser {
       _mediaQueries.add(mediaQuery);
       cleanCss = cleanCss.replaceAll(mediaMatch.group(0)!, '');
     }
-
-    // 3. 解析普通选择器规则
     _parseRulesFromString(cleanCss, source, _rules);
   }
 
-  // 从字符串中提取 selector { prop: val; }
   void _parseRulesFromString(String cssStr, CssSource source, List<_CssRule> targetList) {
     final blockRegex = RegExp(r'([^{]+)\{([^}]*)\}');
     for (final match in blockRegex.allMatches(cssStr)) {
@@ -153,12 +146,10 @@ class _MobileCssParser {
       if (selector.isEmpty || propsStr.isEmpty) continue;
 
       final props = <String, String>{};
-      // 按分号分割属性
       for (final prop in propsStr.split(';')) {
         final parts = prop.split(':');
         if (parts.length >= 2) {
           final key = parts[0].trim().toLowerCase();
-          // 兼容 url(data:image/png;base64,...) 这种包含冒号的值
           final value = parts.sublist(1).join(':').trim(); 
           if (key.isNotEmpty) props[key] = value;
         }
@@ -305,11 +296,16 @@ class _MyHomePageState extends State<MyHomePage> {
     if (mounted) setState(() {});
   }
 
+  // 修复点：将 n 赋值给 formElement，避免闭包内的 null 安全错误
   _FormData? _formOf(dom.Element el) {
     dom.Node? n = el.parent;
     while (n != null) {
       if (n is dom.Element && n.localName == 'form') {
-        return _forms.putIfAbsent(n.hashCode, () => _FormData(method: n.attributes['method']?.toLowerCase() ?? 'get', action: n.attributes['action'] ?? ''));
+        final formElement = n; // 提前赋值，保留非空类型提升
+        return _forms.putIfAbsent(formElement.hashCode, () => _FormData(
+          method: formElement.attributes['method']?.toLowerCase() ?? 'get', 
+          action: formElement.attributes['action'] ?? ''
+        ));
       }
       n = n.parent;
     }
