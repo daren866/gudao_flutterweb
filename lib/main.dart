@@ -3,7 +3,6 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
-import 'package:csslib/csslib.dart' as css;
 
 void main() {
   runApp(const MyApp());
@@ -26,6 +25,9 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// ======================================================================
+// 纯 Dart 实现的安全 CSS 解析器 (彻底抛弃正则引起的 FormatException)
+// ======================================================================
 class _MobileCssParser {
   final List<_CssRule> _rules = [];
   final Map<dom.Element, Map<String, String>> _styleCache = {};
@@ -57,9 +59,7 @@ class _MobileCssParser {
     _styleCache.clear();
   }
 
-  void setBaseUrl(String url) {
-    _baseUrl = url;
-  }
+  void setBaseUrl(String url) => _baseUrl = url;
 
   void setViewport({required double width, required double height, double pixelRatio = 2.0}) {
     _viewportWidth = width;
@@ -111,9 +111,7 @@ class _MobileCssParser {
       try {
         final url = _resolveUrl(href);
         final res = await client.get(Uri.parse(url), headers: {'User-Agent': 'Mozilla/5.0'}).timeout(const Duration(seconds: 5));
-        if (res.statusCode == 200) {
-          _parseCssText(res.body, CssSource.external);
-        }
+        if (res.statusCode == 200) _parseCssText(res.body, CssSource.external);
       } catch (_) {}
     }
   }
@@ -126,43 +124,55 @@ class _MobileCssParser {
     return '${uri.scheme}://${uri.host}${i > 0 ? uri.path.substring(0, i) : ''}/$url';
   }
 
+  // 核心：绝对安全的 CSS 文本解析（不使用复杂的正则分组，避免 FormatException）
   void _parseCssText(String cssText, CssSource source) {
-    try {
-      final sheet = css.parse(cssText);
-      for (final rule in sheet.rules) {
-        if (rule is css.CssStyleRule) {
-          final selector = rule.selector.toString();
-          final props = <String, String>{};
-          for (final declaration in rule.declarations) {
-            props[declaration.property] = declaration.value;
-          }
-          _rules.add(_CssRule(selector: selector, properties: props, specificity: _spec(selector), source: source));
-        } else if (rule is css.CssMediaRule) {
-          final condition = rule.conditionText;
-          final mediaQuery = _MediaQuery(condition: condition, devicePixelRatio: _devicePixelRatio);
-          for (final innerRule in rule.rules) {
-            if (innerRule is css.CssStyleRule) {
-              final selector = innerRule.selector.toString();
-              final props = <String, String>{};
-              for (final declaration in innerRule.declarations) {
-                props[declaration.property] = declaration.value;
-              }
-              mediaQuery.rules.add(_CssRule(selector: selector, properties: props, specificity: _spec(selector), source: source));
-            }
-          }
-          _mediaQueries.add(mediaQuery);
+    // 1. 移除注释 /* ... */
+    String cleanCss = cssText.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
+    
+    // 2. 提取并处理媒体查询 @media { ... }
+    final mediaRegex = RegExp(r'@media\s*([^{]+)\{([\s\S]*?)\}\s*\}', caseSensitive: false);
+    for (final mediaMatch in mediaRegex.allMatches(cleanCss)) {
+      final condition = mediaMatch.group(1)?.trim() ?? '';
+      final innerCss = mediaMatch.group(2) ?? '';
+      final mediaQuery = _MediaQuery(condition: condition, devicePixelRatio: _devicePixelRatio);
+      _parseRulesFromString(innerCss, source, mediaQuery.rules);
+      _mediaQueries.add(mediaQuery);
+      cleanCss = cleanCss.replaceAll(mediaMatch.group(0)!, '');
+    }
+
+    // 3. 解析普通选择器规则
+    _parseRulesFromString(cleanCss, source, _rules);
+  }
+
+  // 从字符串中提取 selector { prop: val; }
+  void _parseRulesFromString(String cssStr, CssSource source, List<_CssRule> targetList) {
+    final blockRegex = RegExp(r'([^{]+)\{([^}]*)\}');
+    for (final match in blockRegex.allMatches(cssStr)) {
+      final selector = match.group(1)?.trim() ?? '';
+      final propsStr = match.group(2)?.trim() ?? '';
+      if (selector.isEmpty || propsStr.isEmpty) continue;
+
+      final props = <String, String>{};
+      // 按分号分割属性
+      for (final prop in propsStr.split(';')) {
+        final parts = prop.split(':');
+        if (parts.length >= 2) {
+          final key = parts[0].trim().toLowerCase();
+          // 兼容 url(data:image/png;base64,...) 这种包含冒号的值
+          final value = parts.sublist(1).join(':').trim(); 
+          if (key.isNotEmpty) props[key] = value;
         }
       }
-    } catch (e) {
-      // Ignore CSS parse errors
+
+      if (props.isNotEmpty) {
+        targetList.add(_CssRule(selector: selector, properties: props, specificity: _spec(selector), source: source));
+      }
     }
   }
 
   void _applyMediaQueries(double sw) {
     for (final q in _mediaQueries) {
-      if (q.matches(sw, _viewportHeight)) {
-        _rules.addAll(q.rules);
-      }
+      if (q.matches(sw, _viewportHeight)) _rules.addAll(q.rules);
     }
   }
 
@@ -240,12 +250,6 @@ class _MediaQuery {
     if (miw != null) return sw >= double.parse(miw.group(1)!);
     if (condition.contains('landscape')) return sw > sh;
     if (condition.contains('portrait')) return sw <= sh;
-    final ratioMatch = RegExp(r'(-webkit-min-device-pixel-ratio|min-resolution):\s*([\d.]+)').firstMatch(condition);
-    if (ratioMatch != null) {
-      double requiredRatio = double.parse(ratioMatch.group(2)!);
-      if (ratioMatch.group(1)!.contains('resolution')) requiredRatio = requiredRatio / 96.0;
-      return devicePixelRatio >= requiredRatio;
-    }
     return false;
   }
 }
@@ -256,10 +260,7 @@ class _FormData extends ChangeNotifier {
   final String method, action;
   final Map<String, String> values = {};
   _FormData({required this.method, required this.action});
-  void setValue(String k, String v) {
-    values[k] = v;
-    notifyListeners();
-  }
+  void setValue(String k, String v) { values[k] = v; notifyListeners(); }
 }
 
 class MyHomePage extends StatefulWidget {
@@ -294,11 +295,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   @override
-  void dispose() {
-    _client?.close();
-    _urlCtrl.dispose();
-    super.dispose();
-  }
+  void dispose() { _client?.close(); _urlCtrl.dispose(); super.dispose(); }
 
   Future<void> _update(String html, String baseUrl) async {
     _cssParser.setBaseUrl(baseUrl);
@@ -312,8 +309,7 @@ class _MyHomePageState extends State<MyHomePage> {
     dom.Node? n = el.parent;
     while (n != null) {
       if (n is dom.Element && n.localName == 'form') {
-        final form = n;
-        return _forms.putIfAbsent(form.hashCode, () => _FormData(method: form.attributes['method']?.toLowerCase() ?? 'get', action: form.attributes['action'] ?? ''));
+        return _forms.putIfAbsent(n.hashCode, () => _FormData(method: n.attributes['method']?.toLowerCase() ?? 'get', action: n.attributes['action'] ?? ''));
       }
       n = n.parent;
     }
@@ -335,17 +331,10 @@ class _MyHomePageState extends State<MyHomePage> {
     setState(() { _loading = true; _url = full; _urlCtrl.text = full; _forms.clear(); });
     try {
       final r = await http.get(Uri.parse(full), headers: {'User-Agent': 'Mozilla/5.0'}).timeout(const Duration(seconds: 10));
-      if (r.statusCode == 200) {
-        setState(() => _html = r.body);
-        await _update(r.body, full);
-      } else {
-        setState(() => _html = '<p style="color:red">Error: ${r.statusCode}</p>');
-      }
-    } catch (e) {
-      setState(() => _html = '<p style="color:red">$e</p>');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+      if (r.statusCode == 200) { setState(() => _html = r.body); await _update(r.body, full); }
+      else { setState(() => _html = '<p style="color:red">Error: ${r.statusCode}</p>'); }
+    } catch (e) { setState(() => _html = '<p style="color:red">$e</p>'); }
+    finally { if (mounted) setState(() => _loading = false); }
   }
 
   Future<void> _submit(_FormData fd) async {
@@ -363,11 +352,8 @@ class _MyHomePageState extends State<MyHomePage> {
       }
       setState(() { _url = full; _urlCtrl.text = full; _html = r.body; });
       await _update(r.body, full);
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'))); }
+    finally { if (mounted) setState(() => _loading = false); }
   }
 
   Widget? _buildCustom(dom.Element el) {
@@ -468,19 +454,11 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Widget _wrapWithEffects(Widget child, Map<String, String> st) {
     final opacityVal = st['opacity'];
-    if (opacityVal != null) {
-      final opacity = double.tryParse(opacityVal);
-      if (opacity != null && opacity < 1.0) child = Opacity(opacity: opacity, child: child);
-    }
+    if (opacityVal != null) { final opacity = double.tryParse(opacityVal); if (opacity != null && opacity < 1.0) child = Opacity(opacity: opacity, child: child); }
     final transformStr = st['transform'] ?? '';
     final scaleMatch = RegExp(r'scale\(([\d.]+)\)').firstMatch(transformStr);
-    if (scaleMatch != null) {
-      final scale = double.parse(scaleMatch.group(1)!);
-      child = Transform.scale(scale: scale, child: child);
-    }
-    if (st['overflow-x'] == 'auto') {
-      child = SingleChildScrollView(scrollDirection: Axis.horizontal, child: child);
-    }
+    if (scaleMatch != null) { final scale = double.parse(scaleMatch.group(1)!); child = Transform.scale(scale: scale, child: child); }
+    if (st['overflow-x'] == 'auto') { child = SingleChildScrollView(scrollDirection: Axis.horizontal, child: child); }
     return child;
   }
 
@@ -489,11 +467,7 @@ class _MyHomePageState extends State<MyHomePage> {
     return List.generate(c.length * 2 - 1, (i) => i.isOdd ? SizedBox(width: d == Axis.horizontal ? g : 0, height: d == Axis.vertical ? g : 0) : c[i ~/ 2]);
   }
 
-  double? _px(String? v) {
-    if (v == null) return null;
-    final m = RegExp(r'([\d.]+)').firstMatch(v);
-    return m != null ? double.tryParse(m.group(1)!) : null;
-  }
+  double? _px(String? v) { if (v == null) return null; final m = RegExp(r'([\d.]+)').firstMatch(v); return m != null ? double.tryParse(m.group(1)!) : null; }
 
   Color? _color(String? v) {
     if (v == null || v == 'transparent') return null;
@@ -505,9 +479,7 @@ class _MyHomePageState extends State<MyHomePage> {
       if (h.length == 3) return Color(int.parse('FF${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}', radix: 16));
     }
     final rgbMatch = RegExp(r'rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)').firstMatch(v);
-    if (rgbMatch != null) {
-      return Color.fromRGBO(int.parse(rgbMatch.group(1)!), int.parse(rgbMatch.group(2)!), int.parse(rgbMatch.group(3)!), rgbMatch.group(4) != null ? double.parse(rgbMatch.group(4)!) : 1.0);
-    }
+    if (rgbMatch != null) return Color.fromRGBO(int.parse(rgbMatch.group(1)!), int.parse(rgbMatch.group(2)!), int.parse(rgbMatch.group(3)!), rgbMatch.group(4) != null ? double.parse(rgbMatch.group(4)!) : 1.0);
     return null;
   }
 
@@ -520,10 +492,7 @@ class _MyHomePageState extends State<MyHomePage> {
     return EdgeInsets.all(_px(v) ?? 0);
   }
 
-  BorderRadius? _radius(String? v) {
-    final r = _px(v);
-    return r != null && r > 0 ? BorderRadius.circular(r) : null;
-  }
+  BorderRadius? _radius(String? v) { final r = _px(v); return r != null && r > 0 ? BorderRadius.circular(r) : null; }
 
   Border? _border(String? v) {
     if (v == null || v == 'none') return null;
@@ -535,30 +504,16 @@ class _MyHomePageState extends State<MyHomePage> {
   List<BoxShadow>? _shadow(String? v) {
     if (v == null || v == 'none') return null;
     final m = RegExp(r'([\d.]+)px\s+([\d.]+)px\s+([\d.]+)px\s+rgba?\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)').firstMatch(v);
-    if (m != null) {
-      return [BoxShadow(offset: Offset(double.parse(m.group(1)!), double.parse(m.group(2)!)), blurRadius: double.parse(m.group(3)!), color: Color.fromRGBO(int.parse(m.group(4)!), int.parse(m.group(5)!), int.parse(m.group(6)!), double.parse(m.group(7)!)))];
-    }
+    if (m != null) return [BoxShadow(offset: Offset(double.parse(m.group(1)!), double.parse(m.group(2)!)), blurRadius: double.parse(m.group(3)!), color: Color.fromRGBO(int.parse(m.group(4)!), int.parse(m.group(5)!), int.parse(m.group(6)!), double.parse(m.group(7)!)))];
     return null;
   }
 
   MainAxisAlignment _main(String? v) {
-    switch (v) {
-      case 'center': return MainAxisAlignment.center;
-      case 'flex-end': return MainAxisAlignment.end;
-      case 'space-between': return MainAxisAlignment.spaceBetween;
-      case 'space-around': return MainAxisAlignment.spaceAround;
-      case 'space-evenly': return MainAxisAlignment.spaceEvenly;
-      default: return MainAxisAlignment.start;
-    }
+    switch (v) { case 'center': return MainAxisAlignment.center; case 'flex-end': return MainAxisAlignment.end; case 'space-between': return MainAxisAlignment.spaceBetween; case 'space-around': return MainAxisAlignment.spaceAround; case 'space-evenly': return MainAxisAlignment.spaceEvenly; default: return MainAxisAlignment.start; }
   }
 
   CrossAxisAlignment _cross(String? v) {
-    switch (v) {
-      case 'center': return CrossAxisAlignment.center;
-      case 'flex-end': return CrossAxisAlignment.end;
-      case 'stretch': return CrossAxisAlignment.stretch;
-      default: return CrossAxisAlignment.center;
-    }
+    switch (v) { case 'center': return CrossAxisAlignment.center; case 'flex-end': return CrossAxisAlignment.end; case 'stretch': return CrossAxisAlignment.stretch; default: return CrossAxisAlignment.center; }
   }
 
   @override
@@ -602,9 +557,7 @@ class _InputWState extends State<_InputW> {
       else if (widget.type == 'radio') { _checked = widget.formData!.values[widget.name] == widget.value; }
       else { widget.formData!.values[widget.name] = widget.value; }
     }
-    _ctrl.addListener(() {
-      if (widget.formData != null && widget.name.isNotEmpty && !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) widget.formData!.values[widget.name] = _ctrl.text;
-    });
+    _ctrl.addListener(() { if (widget.formData != null && widget.name.isNotEmpty && !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) widget.formData!.values[widget.name] = _ctrl.text; });
     widget.formData?.addListener(() { if (widget.type == 'radio' && mounted) setState(() => _checked = widget.formData!.values[widget.name] == widget.value); });
   }
   @override
@@ -613,16 +566,11 @@ class _InputWState extends State<_InputW> {
   Widget build(BuildContext context) {
     final deco = InputDecoration(hintText: widget.placeholder, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)));
     switch (widget.type) {
-      case 'text': case 'search': case 'email': case 'password': case 'url': case 'tel': case 'number':
-        return SizedBox(height: 44, child: TextField(controller: _ctrl, obscureText: widget.type == 'password', decoration: deco));
-      case 'submit':
-        return SizedBox(height: 44, child: ElevatedButton(onPressed: widget.onSubmit, style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), child: Text(widget.value.isNotEmpty ? widget.value : 'Submit')));
-      case 'checkbox':
-        return Row(children: [Checkbox(value: _checked, onChanged: (v) { setState(() => _checked = v ?? false); widget.formData?.setValue(widget.name, _checked ? widget.value : ''); }), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name)]);
-      case 'radio':
-        return GestureDetector(onTap: () => widget.formData?.setValue(widget.name, widget.value), child: Row(children: [Container(width: 22, height: 22, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _checked ? Colors.blue : Colors.grey, width: 2)), child: _checked ? const Center(child: CircleAvatar(radius: 6, backgroundColor: Colors.blue)) : null), const SizedBox(width: 8), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value)]));
-      default:
-        return SizedBox(height: 44, child: TextField(controller: _ctrl, decoration: deco));
+      case 'text': case 'search': case 'email': case 'password': case 'url': case 'tel': case 'number': return SizedBox(height: 44, child: TextField(controller: _ctrl, obscureText: widget.type == 'password', decoration: deco));
+      case 'submit': return SizedBox(height: 44, child: ElevatedButton(onPressed: widget.onSubmit, style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), child: Text(widget.value.isNotEmpty ? widget.value : 'Submit')));
+      case 'checkbox': return Row(children: [Checkbox(value: _checked, onChanged: (v) { setState(() => _checked = v ?? false); widget.formData?.setValue(widget.name, _checked ? widget.value : ''); }), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name)]);
+      case 'radio': return GestureDetector(onTap: () => widget.formData?.setValue(widget.name, widget.value), child: Row(children: [Container(width: 22, height: 22, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _checked ? Colors.blue : Colors.grey, width: 2)), child: _checked ? const Center(child: CircleAvatar(radius: 6, backgroundColor: Colors.blue)) : null), const SizedBox(width: 8), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value)]));
+      default: return SizedBox(height: 44, child: TextField(controller: _ctrl, decoration: deco));
     }
   }
 }
@@ -655,16 +603,10 @@ class _SelW extends StatefulWidget {
 class _SelWState extends State<_SelW> {
   String? _val;
   @override
-  void initState() {
-    super.initState();
-    if (widget.items.isNotEmpty) _val = widget.items.first.value;
-    if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _val ?? '';
-  }
+  void initState() { super.initState(); if (widget.items.isNotEmpty) _val = widget.items.first.value; if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _val ?? ''; }
   @override
   Widget build(BuildContext context) {
-    return DropdownButtonFormField<String>(value: _val, items: widget.items.map((item) => DropdownMenuItem<String>(value: item.value, child: Text(item.key))).toList(), onChanged: (String? newValue) {
-      setState(() { _val = newValue; if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = newValue ?? ''; });
-    });
+    return DropdownButtonFormField<String>(value: _val, items: widget.items.map((item) => DropdownMenuItem<String>(value: item.value, child: Text(item.key))).toList(), onChanged: (String? newValue) { setState(() { _val = newValue; if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = newValue ?? ''; }); });
   }
 }
 
@@ -679,12 +621,7 @@ class _TxtW extends StatefulWidget {
 class _TxtWState extends State<_TxtW> {
   late TextEditingController _ctrl;
   @override
-  void initState() {
-    super.initState();
-    _ctrl = TextEditingController(text: widget.value);
-    if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = widget.value;
-    _ctrl.addListener(() { if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _ctrl.text; });
-  }
+  void initState() { super.initState(); _ctrl = TextEditingController(text: widget.value); if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = widget.value; _ctrl.addListener(() { if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _ctrl.text; }); }
   @override
   void dispose() { _ctrl.dispose(); super.dispose(); }
   @override
