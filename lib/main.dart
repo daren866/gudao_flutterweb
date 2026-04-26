@@ -35,6 +35,7 @@ class _MobileCssParser {
   String _baseUrl = '';
   double _viewportWidth = 375;
   double _viewportHeight = 812;
+  double _devicePixelRatio = 2.0;
 
   static final Map<String, Map<String, String>> _userAgentStyles = {
     '*': {'margin': '0', 'padding': '0', 'box-sizing': 'border-box'},
@@ -66,6 +67,7 @@ class _MobileCssParser {
   void setViewport({required double width, required double height, double pixelRatio = 2.0}) {
     _viewportWidth = width;
     _viewportHeight = height;
+    _devicePixelRatio = pixelRatio;
   }
 
   void parseViewportMeta(String html) {
@@ -152,7 +154,8 @@ class _MobileCssParser {
 
   void _extractMediaQueries(String css) {
     for (final m in RegExp(r'@media\s+([^{]+)\{([^{}]*(\{[^{}]*\}[^{}]*)*\}', dotAll: true).allMatches(css)) {
-      final q = _MediaQuery(condition: m.group(1)?.trim() ?? '');
+      // 修复：传入 _devicePixelRatio 给自定义的 _MediaQuery 类
+      final q = _MediaQuery(condition: m.group(1)?.trim() ?? '', devicePixelRatio: _devicePixelRatio);
       for (final b in RegExp(r'([^{]+)\{([^}]*)\}').allMatches(m.group(2)?.trim() ?? '')) {
         final sel = b.group(1)?.trim() ?? '';
         final props = _parseProps(b.group(2)?.trim() ?? '');
@@ -224,7 +227,6 @@ class _MobileCssParser {
   }
 
   String _resolveValue(String v) {
-    // 新增：兼容 calc(100% - 30px)
     v = v.replaceAllMapped(RegExp(r'calc\(\s*100%\s*-\s*([\d.]+)px\s*\)'), (m) {
       final px = double.parse(m.group(1)!);
       return '${(_viewportWidth - px).round()}px';
@@ -261,11 +263,13 @@ class _CssRule {
   _CssRule({required this.selector, required this.properties, required this.specificity, required this.source});
 }
 
+// 修复：增加 devicePixelRatio 字段，防止访问 Flutter 的 context 报错
 class _MediaQuery {
   final String condition;
+  final double devicePixelRatio;
   final List<_CssRule> rules = [];
 
-  _MediaQuery({required this.condition});
+  _MediaQuery({required this.condition, required this.devicePixelRatio});
 
   bool matches(double sw, double sh) {
     final mw = RegExp(r'max-width:\s*(\d+)px').firstMatch(condition);
@@ -283,14 +287,13 @@ class _MediaQuery {
       return sw <= sh;
     }
     
-    // 新增：兼容高清屏媒体查询
     final ratioMatch = RegExp(r'(-webkit-min-device-pixel-ratio|min-resolution):\s*([\d.]+)').firstMatch(condition);
     if (ratioMatch != null) {
       double requiredRatio = double.parse(ratioMatch.group(2)!);
       if (ratioMatch.group(1)!.contains('resolution')) {
         requiredRatio = requiredRatio / 96.0;
       }
-      return MediaQuery.of(context).devicePixelRatio >= requiredRatio;
+      return devicePixelRatio >= requiredRatio;
     }
     
     return false;
@@ -499,16 +502,26 @@ class _MyHomePageState extends State<MyHomePage> {
     final wrap = st['flex-wrap'] == 'wrap';
     final gap = _px(st['gap']);
     
-    Widget child = wrap
-        ? Wrap(
-            spacing: gap ?? 8,
-            runSpacing: gap ?? 8,
-            children: el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList())
-        : Flex(
-            direction: dir,
-            mainAxisAlignment: _main(st['justify-content']),
-            crossAxisAlignment: _cross(st['align-items']),
-            children: _gap(el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom).toList(), gap, dir));
+    Widget child;
+    if (wrap) {
+      child = Wrap(
+        spacing: gap ?? 8,
+        runSpacing: gap ?? 8,
+        children: el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList(),
+      );
+    } else {
+      // 修复：将 .toList() 放到 map 后面，闭合 Flex() 的括号
+      child = Flex(
+        direction: dir,
+        mainAxisAlignment: _main(st['justify-content']),
+        crossAxisAlignment: _cross(st['align-items']),
+        children: _gap(
+          el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList(),
+          gap,
+          dir
+        ),
+      );
+    }
 
     child = Container(
       margin: _insets(st['margin']),
@@ -538,7 +551,8 @@ class _MyHomePageState extends State<MyHomePage> {
         decoration: BoxDecoration(color: _color(st['background-color']), borderRadius: _radius(st['border-radius'])),
         child: LayoutBuilder(
           builder: (_, c) {
-            final usableWidth = (c.maxWidth.isFinite ? c.maxWidth : _viewportWidth) - p.horizontal - (cols - 1) * (gap ?? 8);
+            // 修复：使用 MediaQuery.of(context) 替代不存在的 _viewportWidth
+            final usableWidth = (c.maxWidth.isFinite ? c.maxWidth : MediaQuery.of(context).size.width) - p.horizontal - (cols - 1) * (gap ?? 8);
             final w = (usableWidth / cols).clamp(0.0, double.infinity);
             return Wrap(
               spacing: gap ?? 8,
@@ -580,7 +594,6 @@ class _MyHomePageState extends State<MyHomePage> {
         margin: _insets(st['margin']),
         padding: _insets(st['padding']),
         constraints: BoxConstraints(minHeight: _px(st['min-height']) ?? 44),
-        // 修复死循环：使用 innerHtml
         child: HtmlWidget(
           el.innerHtml,
           customWidgetBuilder: _buildCustom,
@@ -601,12 +614,10 @@ class _MyHomePageState extends State<MyHomePage> {
     final maxWidth = _px(st['max-width']);
     final noWrap = st['white-space'] == 'nowrap';
 
-    // 修复死循环 & 拦截范围：只有确实有装饰属性时才拦截，否则返回 null 让包库自己渲染
     if (bg == null && p == EdgeInsets.zero && m == EdgeInsets.zero && r == null && border == null && shadow == null && maxWidth == null && noWrap == false) {
       return null;
     }
 
-    // 修复死循环：使用 innerHtml 代替 outerHtml
     Widget child = HtmlWidget(
       el.innerHtml,
       customWidgetBuilder: _buildCustom,
@@ -724,7 +735,6 @@ class _MyHomePageState extends State<MyHomePage> {
     return m != null ? double.tryParse(m.group(1)!) : null;
   }
 
-  // 增强：支持英文单词、rgb/rgba 格式颜色
   Color? _color(String? v) {
     if (v == null || v == 'transparent') {
       return null;
@@ -782,9 +792,10 @@ class _MyHomePageState extends State<MyHomePage> {
     if (v == null || v == 'none') {
       return null;
     }
-    final m = RegExp(r'([\d.]+)px\s+solid\s+(#[0-9a-fA-F]{3,6}').firstMatch(v);
+    final m = RegExp(r'([\d.]+)px\s+solid\s+(#[0-9a-fA-F]{3,6})').firstMatch(v);
     if (m != null) {
-      return Border(bottom: BorderSide(color: _color(m.group(2))!, width: double.parse(m.group(1)!));
+      // 修复：补全缺失的两个右括号
+      return Border(bottom: BorderSide(color: _color(m.group(2))!, width: double.parse(m.group(1)!)));
     }
     return null;
   }
