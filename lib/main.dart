@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:html/dom.dart' as dom;
+import 'package:flutter_js/flutter_js.dart';
 
 void main() {
   runApp(const MyApp());
@@ -16,9 +17,84 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: '我的应用',
       theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
-      home: const MyHomePage(title: '我的应用 (完整表单提交)'),
+      home: const MyHomePage(title: '我的应用 (支持JS执行)'),
       debugShowCheckedModeBanner: false,
     );
+  }
+}
+
+// ======================================================================
+// JS 运行时管理器
+// ======================================================================
+class _JsRuntimeManager {
+  static JavascriptRuntime? _runtime;
+  
+  static JavascriptRuntime get runtime {
+    _runtime ??= _createRuntime();
+    return _runtime!;
+  }
+  
+  static JavascriptRuntime _createRuntime() {
+    final js = getJavascriptRuntime();
+    
+    // 注入 console.log 实现
+    js.evaluate('''
+      var console = {
+        log: function() {
+          var args = Array.prototype.slice.call(arguments);
+          var msg = args.map(function(a) {
+            if (typeof a === 'object') return JSON.stringify(a);
+            return String(a);
+          }).join(' ');
+          _consoleLog(msg);
+        },
+        warn: function() {
+          var args = Array.prototype.slice.call(arguments);
+          var msg = args.map(function(a) {
+            if (typeof a === 'object') return JSON.stringify(a);
+            return String(a);
+          }).join(' ');
+          _consoleWarn(msg);
+        },
+        error: function() {
+          var args = Array.prototype.slice.call(arguments);
+          var msg = args.map(function(a) {
+            if (typeof a === 'object') return JSON.stringify(a);
+            return String(a);
+          }).join(' ');
+          _consoleError(msg);
+        },
+        info: function() {
+          var args = Array.prototype.slice.call(arguments);
+          var msg = args.map(function(a) {
+            if (typeof a === 'object') return JSON.stringify(a);
+            return String(a);
+          }).join(' ');
+          _consoleInfo(msg);
+        }
+      };
+    ''');
+    
+    // 注入 setTimeout 模拟（同步执行）
+    js.evaluate('''
+      var setTimeout = function(fn, delay) {
+        fn();
+        return 0;
+      };
+      var setInterval = function(fn, delay) {
+        fn();
+        return 0;
+      };
+      var clearTimeout = function(id) {};
+      var clearInterval = function(id) {};
+    ''');
+    
+    return js;
+  }
+  
+  static void dispose() {
+    _runtime?.dispose();
+    _runtime = null;
   }
 }
 
@@ -40,6 +116,7 @@ class _FormData extends ChangeNotifier {
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
+
   final String title;
 
   @override
@@ -48,20 +125,73 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final TextEditingController _urlController = TextEditingController();
-  String _htmlContent = '<h2>欢迎使用</h2><p>完整支持 form 提交、input / button / select / textarea。</p>';
+  String _htmlContent = '<h2>欢迎使用</h2><p>支持 form 提交、input / button / select / textarea，以及 script 标签执行。</p>';
   bool _isLoading = false;
   String _currentUrl = '';
-
   final Map<int, _FormData> _formRegistry = {};
+  
+  // JS 控制台日志列表
+  final List<Map<String, String>> _consoleLogs = [];
+  bool _showConsole = false;
+  
+  // 全局 JS 变量存储
+  final Map<String, dynamic> _jsGlobalVars = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _setupJsBridge();
+  }
+  
+  @override
+  void dispose() {
+    _JsRuntimeManager.dispose();
+    super.dispose();
+  }
+  
+  // 设置 JS Bridge
+  void _setupJsBridge() {
+    final js = _JsRuntimeManager.runtime;
+    
+    // 注册 console 回调
+    js.onMessage('_consoleLog', (dynamic args) {
+      _addConsoleLog('log', args.toString());
+    });
+    js.onMessage('_consoleWarn', (dynamic args) {
+      _addConsoleLog('warn', args.toString());
+    });
+    js.onMessage('_consoleError', (dynamic args) {
+      _addConsoleLog('error', args.toString());
+    });
+    js.onMessage('_consoleInfo', (dynamic args) {
+      _addConsoleLog('info', args.toString());
+    });
+  }
+  
+  void _addConsoleLog(String level, String message) {
+    if (mounted) {
+      setState(() {
+        _consoleLogs.add({
+          'level': level,
+          'message': message,
+          'time': DateTime.now().toString().substring(11, 19),
+        });
+      });
+    }
+  }
+  
+  void _clearConsole() {
+    setState(() => _consoleLogs.clear());
+  }
 
   // ------------------------------------------------------------------
-  // 修复：使用局部非空变量避免闭包空安全问题
+  // 获取表单数据
   // ------------------------------------------------------------------
   _FormData? _getFormDataForElement(dom.Element element) {
     dom.Node? node = element.parent;
     while (node != null) {
       if (node is dom.Element && node.localName == 'form') {
-        final formElement = node; // 捕获为非空局部变量
+        final formElement = node;
         return _formRegistry.putIfAbsent(formElement.hashCode, () {
           final method = formElement.attributes['method']?.toLowerCase() ?? 'get';
           final action = formElement.attributes['action'] ?? '';
@@ -98,24 +228,113 @@ class _MyHomePageState extends State<MyHomePage> {
     return response.body;
   }
 
+  // ------------------------------------------------------------------
+  // 执行 JavaScript
+  // ------------------------------------------------------------------
+  String _executeScript(String scriptContent, {String? src}) {
+    if (scriptContent.trim().isEmpty) return '';
+    
+    final js = _JsRuntimeManager.runtime;
+    
+    try {
+      // 注入全局变量到 JS 环境
+      String prefix = '';
+      _jsGlobalVars.forEach((key, value) {
+        if (value is String) {
+          prefix += 'var $key = "$value";\n';
+        } else if (value is num || value is bool) {
+          prefix += 'var $key = $value;\n';
+        }
+      });
+      
+      final result = js.evaluate('$prefix$scriptContent');
+      
+      if (result.isError) {
+        final errorMsg = result.stringResult;
+        _addConsoleLog('error', 'Script Error: $errorMsg');
+        return '❌ $errorMsg';
+      }
+      
+      if (result.stringResult.isNotEmpty && result.stringResult != 'undefined' && result.stringResult != 'null') {
+        _addConsoleLog('log', '返回值: ${result.stringResult}');
+      }
+      
+      return '';
+    } catch (e) {
+      _addConsoleLog('error', '执行异常: $e');
+      return '❌ $e';
+    }
+  }
+  
+  // 从 HTML 中提取并执行所有 script 标签
+  void _executeScriptsFromHtml(String html) {
+    final document = dom.Document.html(html);
+    final scripts = document.getElementsByTagName('script');
+    
+    for (final script in scripts) {
+      final src = script.attributes['src'];
+      final type = script.attributes['type']?.toLowerCase();
+      
+      // 跳过非 JavaScript 类型
+      if (type != null && type != 'text/javascript' && type != 'application/javascript' && type != 'module') {
+        continue;
+      }
+      
+      if (src != null) {
+        // 外部脚本 - 异步加载
+        _loadExternalScript(src);
+      } else {
+        // 内联脚本
+        final content = script.text;
+        if (content.trim().isNotEmpty) {
+          _addConsoleLog('info', '执行内联脚本...');
+          _executeScript(content);
+        }
+      }
+    }
+  }
+  
+  // 加载外部脚本
+  Future<void> _loadExternalScript(String src) async {
+    final fullUrl = _resolveUrl(src);
+    _addConsoleLog('info', '加载外部脚本: $fullUrl');
+    
+    try {
+      final response = await http.get(
+        Uri.parse(fullUrl),
+        headers: {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+      ).timeout(const Duration(seconds: 15));
+      
+      if (response.statusCode == 200) {
+        final content = _fixEncoding(response);
+        _executeScript(content);
+      } else {
+        _addConsoleLog('error', '加载脚本失败: HTTP ${response.statusCode}');
+      }
+    } catch (e) {
+      _addConsoleLog('error', '加载脚本异常: $e');
+    }
+  }
+
   Future<void> _fetchWebContent(String url) async {
     if (url.isEmpty) return;
     final fullUrl = _resolveUrl(url);
-
     setState(() {
       _isLoading = true;
       _currentUrl = fullUrl;
       _urlController.text = fullUrl;
       _formRegistry.clear();
     });
-
     try {
       final response = await http.get(Uri.parse(fullUrl), headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }).timeout(const Duration(seconds: 10));
-
+      
       if (response.statusCode == 200) {
-        setState(() => _htmlContent = _fixEncoding(response));
+        final html = _fixEncoding(response);
+        setState(() => _htmlContent = html);
+        // 执行页面中的脚本
+        _executeScriptsFromHtml(html);
       } else {
         setState(() => _htmlContent = '<p style="color:red">请求失败: ${response.statusCode}</p>');
       }
@@ -130,14 +349,10 @@ class _MyHomePageState extends State<MyHomePage> {
     final action = formData.action;
     final fullUrl = action.isNotEmpty ? _resolveUrl(action) : _currentUrl;
     if (fullUrl.isEmpty) return;
-
     setState(() => _isLoading = true);
-
     try {
       final data = Map.fromEntries(formData.values.entries.where((e) => e.key.isNotEmpty));
-
       http.Response response;
-
       if (formData.method == 'post') {
         response = await http.post(Uri.parse(fullUrl), headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -152,12 +367,13 @@ class _MyHomePageState extends State<MyHomePage> {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }).timeout(const Duration(seconds: 10));
       }
-
       setState(() {
         _currentUrl = fullUrl;
         _urlController.text = fullUrl;
         if (response.statusCode == 200) {
-          _htmlContent = _fixEncoding(response);
+          final html = _fixEncoding(response);
+          _htmlContent = html;
+          _executeScriptsFromHtml(html);
         } else {
           _htmlContent = '<p style="color:red">提交返回状态码: ${response.statusCode}</p>';
         }
@@ -177,7 +393,9 @@ class _MyHomePageState extends State<MyHomePage> {
     final value = element.attributes['value'] ?? '';
     final placeholder = element.attributes['placeholder'] ?? '';
     final formData = _getFormDataForElement(element);
-
+    // 支持 onclick 属性
+    final onclick = element.attributes['onclick'];
+    
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: _InputWrapper(
@@ -187,6 +405,7 @@ class _MyHomePageState extends State<MyHomePage> {
         name: name,
         formData: formData,
         onSubmit: formData != null ? () => _submitForm(formData) : null,
+        onclick: onclick,
       ),
     );
   }
@@ -195,7 +414,8 @@ class _MyHomePageState extends State<MyHomePage> {
     final type = element.attributes['type']?.toLowerCase() ?? 'button';
     final text = element.innerHtml;
     final formData = _getFormDataForElement(element);
-
+    final onclick = element.attributes['onclick'];
+    
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: _FormButtonWrapper(
@@ -203,6 +423,7 @@ class _MyHomePageState extends State<MyHomePage> {
         text: text,
         formData: formData,
         onSubmit: formData != null ? () => _submitForm(formData) : null,
+        onclick: onclick,
       ),
     );
   }
@@ -210,16 +431,22 @@ class _MyHomePageState extends State<MyHomePage> {
   Widget? _buildHtmlSelect(dom.Element element) {
     final name = element.attributes['name'] ?? '';
     final formData = _getFormDataForElement(element);
+    final onchange = element.attributes['onchange'];
     final options = element.getElementsByTagName('option');
     final items = options.map((opt) {
       final label = opt.text.trim();
       final val = opt.attributes['value'] ?? label;
       return MapEntry(label, val);
     }).toList();
-
+    
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: _SelectWrapper(items: items, name: name, formData: formData),
+      child: _SelectWrapper(
+        items: items, 
+        name: name, 
+        formData: formData,
+        onchange: onchange,
+      ),
     );
   }
 
@@ -228,11 +455,141 @@ class _MyHomePageState extends State<MyHomePage> {
     final placeholder = element.attributes['placeholder'] ?? '';
     final value = element.text.trim();
     final formData = _getFormDataForElement(element);
-
+    final oninput = element.attributes['oninput'];
+    
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: _TextareaWrapper(name: name, placeholder: placeholder, value: value, formData: formData),
+      child: _TextareaWrapper(
+        name: name, 
+        placeholder: placeholder, 
+        value: value, 
+        formData: formData,
+        oninput: oninput,
+      ),
     );
+  }
+  
+  // 构建 Script 标签（显示为可展开的代码块）
+  Widget? _buildHtmlScript(dom.Element element) {
+    final src = element.attributes['src'];
+    final type = element.attributes['type'];
+    final content = element.text.trim();
+    
+    // 如果是外部脚本且无内容，显示为加载提示
+    if (src != null && content.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey[100],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.orange[300]!),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.javascript, color: Colors.orange[700], size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '外部脚本: $src',
+                style: TextStyle(color: Colors.orange[700], fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    // 内联脚本 - 显示代码块
+    if (content.isNotEmpty) {
+      return _ScriptBlockWidget(
+        scriptContent: content,
+        type: type,
+        onExecute: () => _executeScript(content),
+      );
+    }
+    
+    return const SizedBox.shrink();
+  }
+  
+  // 控制台面板
+  Widget _buildConsolePanel() {
+    return Container(
+      height: 200,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        border: Border(top: BorderSide(color: Colors.grey[600]!, width: 2)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            color: const Color(0xFF2D2D2D),
+            child: Row(
+              children: [
+                const Text('控制台', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                Text('${_consoleLogs.length} 条日志', style: TextStyle(color: Colors.grey[400], fontSize: 11)),
+                const SizedBox(width: 16),
+                InkWell(
+                  onTap: _clearConsole,
+                  child: const Icon(Icons.clear_all, color: Colors.grey, size: 16),
+                ),
+                const SizedBox(width: 8),
+                InkWell(
+                  onTap: () => setState(() => _showConsole = false),
+                  child: const Icon(Icons.close, color: Colors.grey, size: 16),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _consoleLogs.isEmpty
+                ? const Center(
+                    child: Text('暂无日志输出', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.all(8),
+                    itemCount: _consoleLogs.length,
+                    itemBuilder: (context, index) {
+                      final log = _consoleLogs[index];
+                      final color = _getLogColor(log['level']!);
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('[${log['time']}] ', style: TextStyle(color: Colors.grey[500], fontSize: 10, fontFamily: 'monospace')),
+                            Container(
+                              width: 6,
+                              height: 6,
+                              margin: const EdgeInsets.only(top: 5, right: 6),
+                              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                            ),
+                            Expanded(
+                              child: Text(
+                                log['message']!,
+                                style: TextStyle(color: color, fontSize: 11, fontFamily: 'monospace'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Color _getLogColor(String level) {
+    switch (level) {
+      case 'error': return Colors.red[400]!;
+      case 'warn': return Colors.yellow[400]!;
+      case 'info': return Colors.blue[400]!;
+      default: return Colors.white70;
+    }
   }
 
   @override
@@ -241,6 +598,19 @@ class _MyHomePageState extends State<MyHomePage> {
       appBar: AppBar(
         title: Text(widget.title),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          // 控制台切换按钮
+          IconButton(
+            icon: Badge(
+              isLabelVisible: _consoleLogs.isNotEmpty,
+              label: Text(_consoleLogs.length.toString()),
+              child: const Icon(Icons.terminal),
+            ),
+            onPressed: () => setState(() => _showConsole = !_showConsole),
+            tooltip: '控制台',
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: Column(
         children: [
@@ -257,6 +627,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       border: const OutlineInputBorder(),
                       filled: true,
                       fillColor: Colors.grey[200],
+                      prefixIcon: const Icon(Icons.language, size: 20),
                     ),
                   ),
                 ),
@@ -293,6 +664,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     if (tag == 'select') return _buildHtmlSelect(element);
                     if (tag == 'textarea') return _buildHtmlTextarea(element);
                     if (tag == 'option') return const SizedBox.shrink();
+                    if (tag == 'script') return _buildHtmlScript(element);
                     return null;
                   },
                   textStyle: const TextStyle(fontSize: 16),
@@ -301,12 +673,36 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
           ),
+          // 控制台面板
+          if (_showConsole) _buildConsolePanel(),
           SafeArea(
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               color: Colors.grey[300],
-              child: Text('当前 URL: $_currentUrl', style: const TextStyle(fontSize: 12, color: Colors.black54), overflow: TextOverflow.ellipsis),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '当前 URL: $_currentUrl',
+                      style: const TextStyle(fontSize: 12, color: Colors.black54),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (_consoleLogs.isNotEmpty && !_showConsole)
+                    InkWell(
+                      onTap: () => setState(() => _showConsole = true),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.error_outline, color: _consoleLogs.any((l) => l['level'] == 'error') ? Colors.red : Colors.orange, size: 14),
+                          const SizedBox(width: 4),
+                          Text('${_consoleLogs.length}', style: const TextStyle(fontSize: 11, color: Colors.black54)),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ],
@@ -316,7 +712,130 @@ class _MyHomePageState extends State<MyHomePage> {
 }
 
 // ======================================================================
-// Input 控件
+// Script 代码块组件
+// ======================================================================
+class _ScriptBlockWidget extends StatefulWidget {
+  final String scriptContent;
+  final String? type;
+  final VoidCallback onExecute;
+
+  const _ScriptBlockWidget({
+    required this.scriptContent,
+    this.type,
+    required this.onExecute,
+  });
+
+  @override
+  State<_ScriptBlockWidget> createState() => _ScriptBlockWidgetState();
+}
+
+class _ScriptBlockWidgetState extends State<_ScriptBlockWidget> {
+  bool _expanded = false;
+  String? _lastError;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF282C34),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange[300]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 标题栏
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF21252B),
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(7),
+                  topRight: const Radius.circular(7),
+                  bottomLeft: Radius.circular(_expanded ? 0 : 7),
+                  bottomRight: Radius.circular(_expanded ? 0 : 7),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.javascript, color: Colors.orange[400], size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    widget.type ?? 'text/javascript',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 11, fontFamily: 'monospace'),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${widget.scriptContent.split('\n').length} 行',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 10),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(_expanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey[400], size: 18),
+                ],
+              ),
+            ),
+          ),
+          // 代码内容
+          if (_expanded)
+            Container(
+              padding: const EdgeInsets.all(12),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Text(
+                  widget.scriptContent,
+                  style: TextStyle(
+                    color: Colors.green[300],
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            ),
+          // 操作栏
+          if (_expanded)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF21252B),
+                borderRadius: BorderRadius.only(
+                  bottomLeft: const Radius.circular(7),
+                  bottomRight: const Radius.circular(7),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (_lastError != null)
+                    Expanded(
+                      child: Text(
+                        _lastError!,
+                        style: const TextStyle(color: Colors.red, fontSize: 10),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() => _lastError = null);
+                      widget.onExecute();
+                    },
+                    icon: const Icon(Icons.play_arrow, size: 16),
+                    label: const Text('执行', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(foregroundColor: Colors.green[400]),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ======================================================================
+// Input 控件（增加 onclick 支持）
 // ======================================================================
 class _InputWrapper extends StatefulWidget {
   final String type;
@@ -325,8 +844,17 @@ class _InputWrapper extends StatefulWidget {
   final String name;
   final _FormData? formData;
   final VoidCallback? onSubmit;
+  final String? onclick;
 
-  const _InputWrapper({required this.type, required this.placeholder, required this.value, required this.name, this.formData, this.onSubmit});
+  const _InputWrapper({
+    required this.type,
+    required this.placeholder,
+    required this.value,
+    required this.name,
+    this.formData,
+    this.onSubmit,
+    this.onclick,
+  });
 
   @override
   State<_InputWrapper> createState() => _InputWrapperState();
@@ -355,14 +883,23 @@ class _InputWrapperState extends State<_InputWrapper> {
   }
 
   void _onTextChanged() {
-    if (widget.formData != null && widget.name.isNotEmpty && !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) {
+    if (widget.formData != null && widget.name.isNotEmpty &&
+        !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) {
       widget.formData!.values[widget.name] = _controller.text;
     }
+    // 触发 oninput 事件（如果有）
   }
 
   void _onFormChanged() {
     if (widget.type == 'radio' && widget.formData != null && mounted) {
       setState(() => _isChecked = widget.formData!.values[widget.name] == widget.value);
+    }
+  }
+
+  void _handleOnclick() {
+    if (widget.onclick != null && widget.onclick!.isNotEmpty) {
+      final js = _JsRuntimeManager.runtime;
+      js.evaluate(widget.onclick!);
     }
   }
 
@@ -400,12 +937,16 @@ class _InputWrapperState extends State<_InputWrapper> {
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Checkbox(value: _isChecked, onChanged: (val) {
-              setState(() => _isChecked = val ?? false);
-              if (widget.formData != null && widget.name.isNotEmpty) {
-                widget.formData!.setValue(widget.name, _isChecked ? widget.value : '');
-              }
-            }),
+            Checkbox(
+              value: _isChecked,
+              onChanged: (val) {
+                setState(() => _isChecked = val ?? false);
+                if (widget.formData != null && widget.name.isNotEmpty) {
+                  widget.formData!.setValue(widget.name, _isChecked ? widget.value : '');
+                }
+                _handleOnclick();
+              },
+            ),
             Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name),
           ],
         );
@@ -415,6 +956,7 @@ class _InputWrapperState extends State<_InputWrapper> {
             if (widget.formData != null && widget.name.isNotEmpty) {
               widget.formData!.setValue(widget.name, widget.value);
             }
+            _handleOnclick();
           },
           child: Padding(
             padding: const EdgeInsets.only(bottom: 4.0),
@@ -424,8 +966,13 @@ class _InputWrapperState extends State<_InputWrapper> {
                 Container(
                   width: 20,
                   height: 20,
-                  decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _isChecked ? Colors.blue : Colors.grey, width: 2)),
-                  child: _isChecked ? Center(child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.blue))) : null,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: _isChecked ? Colors.blue : Colors.grey, width: 2),
+                  ),
+                  child: _isChecked
+                      ? Center(child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.blue)))
+                      : null,
                 ),
                 const SizedBox(width: 8),
                 Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value),
@@ -435,7 +982,10 @@ class _InputWrapperState extends State<_InputWrapper> {
         );
       case 'submit':
         return ElevatedButton(
-          onPressed: widget.onSubmit,
+          onPressed: () {
+            _handleOnclick();
+            widget.onSubmit?.call();
+          },
           style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white),
           child: Text(widget.value.isNotEmpty ? widget.value : 'Submit'),
         );
@@ -445,6 +995,7 @@ class _InputWrapperState extends State<_InputWrapper> {
             widget.formData?.values.clear();
             _controller.clear();
             setState(() => _isChecked = false);
+            _handleOnclick();
           },
           style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white),
           child: Text(widget.value.isNotEmpty ? widget.value : 'Reset'),
@@ -452,7 +1003,7 @@ class _InputWrapperState extends State<_InputWrapper> {
       case 'button':
       default:
         return ElevatedButton(
-          onPressed: () {},
+          onPressed: _handleOnclick,
           style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, side: const BorderSide(color: Colors.grey)),
           child: Text(widget.value.isNotEmpty ? widget.value : (widget.type.toUpperCase())),
         );
@@ -461,34 +1012,54 @@ class _InputWrapperState extends State<_InputWrapper> {
 }
 
 // ======================================================================
-// Button 控件
+// Button 控件（增加 onclick 支持）
 // ======================================================================
 class _FormButtonWrapper extends StatelessWidget {
   final String type;
   final String text;
   final _FormData? formData;
   final VoidCallback? onSubmit;
+  final String? onclick;
 
-  const _FormButtonWrapper({required this.type, required this.text, this.formData, this.onSubmit});
+  const _FormButtonWrapper({
+    required this.type,
+    required this.text,
+    this.formData,
+    this.onSubmit,
+    this.onclick,
+  });
+
+  void _handleOnclick() {
+    if (onclick != null && onclick!.isNotEmpty) {
+      final js = _JsRuntimeManager.runtime;
+      js.evaluate(onclick!);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     if (type == 'submit') {
       return ElevatedButton(
-        onPressed: onSubmit,
+        onPressed: () {
+          _handleOnclick();
+          onSubmit?.call();
+        },
         style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white),
         child: Text(text.isEmpty ? 'Submit' : text),
       );
     }
     if (type == 'reset') {
       return ElevatedButton(
-        onPressed: () => formData?.values.clear(),
+        onPressed: () {
+          formData?.values.clear();
+          _handleOnclick();
+        },
         style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white),
         child: Text(text.isEmpty ? 'Reset' : text),
       );
     }
     return ElevatedButton(
-      onPressed: () {},
+      onPressed: _handleOnclick,
       style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, side: const BorderSide(color: Colors.grey)),
       child: Text(text.isEmpty ? 'Button' : text),
     );
@@ -496,14 +1067,20 @@ class _FormButtonWrapper extends StatelessWidget {
 }
 
 // ======================================================================
-// Select 控件
+// Select 控件（增加 onchange 支持）
 // ======================================================================
 class _SelectWrapper extends StatefulWidget {
   final List<MapEntry<String, String>> items;
   final String name;
   final _FormData? formData;
+  final String? onchange;
 
-  const _SelectWrapper({required this.items, required this.name, this.formData});
+  const _SelectWrapper({
+    required this.items,
+    required this.name,
+    this.formData,
+    this.onchange,
+  });
 
   @override
   State<_SelectWrapper> createState() => _SelectWrapperState();
@@ -523,10 +1100,18 @@ class _SelectWrapperState extends State<_SelectWrapper> {
     }
   }
 
+  void _handleOnchange(String? val) {
+    if (widget.onchange != null && widget.onchange!.isNotEmpty) {
+      final js = _JsRuntimeManager.runtime;
+      // 注入 this.value
+      js.evaluate('var this = { value: "$val" };');
+      js.evaluate(widget.onchange!);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return DropdownButtonFormField<String>(
-      // 修复：适配 Dart 3.33+ 废弃 value 的问题，改用 initialValue
       initialValue: widget.items.any((e) => e.value == _selectedValue) ? _selectedValue : null,
       decoration: const InputDecoration(
         border: OutlineInputBorder(),
@@ -540,21 +1125,29 @@ class _SelectWrapperState extends State<_SelectWrapper> {
         if (widget.formData != null && widget.name.isNotEmpty) {
           widget.formData!.values[widget.name] = val ?? '';
         }
+        _handleOnchange(val);
       },
     );
   }
 }
 
 // ======================================================================
-// Textarea 控件
+// Textarea 控件（增加 oninput 支持）
 // ======================================================================
 class _TextareaWrapper extends StatefulWidget {
   final String name;
   final String placeholder;
   final String value;
   final _FormData? formData;
+  final String? oninput;
 
-  const _TextareaWrapper({required this.name, required this.placeholder, required this.value, this.formData});
+  const _TextareaWrapper({
+    required this.name,
+    required this.placeholder,
+    required this.value,
+    this.formData,
+    this.oninput,
+  });
 
   @override
   State<_TextareaWrapper> createState() => _TextareaWrapperState();
@@ -573,6 +1166,12 @@ class _TextareaWrapperState extends State<_TextareaWrapper> {
     _controller.addListener(() {
       if (widget.formData != null && widget.name.isNotEmpty) {
         widget.formData!.values[widget.name] = _controller.text;
+      }
+      // 触发 oninput
+      if (widget.oninput != null && widget.oninput!.isNotEmpty) {
+        final js = _JsRuntimeManager.runtime;
+        js.evaluate('var this = { value: "${_controller.text}" };');
+        js.evaluate(widget.oninput!);
       }
     });
   }
