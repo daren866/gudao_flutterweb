@@ -205,7 +205,6 @@ class _MobileCssParser {
     if (_userAgentStyles.containsKey(tag)) {
       styles.addAll(_userAgentStyles[tag]!);
     }
-    // 匹配 img, video 组合选择器
     if (_userAgentStyles.containsKey('img, video') && (tag == 'img' || tag == 'video')) {
       styles.addAll(_userAgentStyles['img, video']!);
     }
@@ -227,7 +226,6 @@ class _MobileCssParser {
   }
 
   String _resolveValue(String v) {
-    // 新增：兼容 calc(100% - 30px)
     v = v.replaceAllMapped(RegExp(r'calc\(\s*100%\s*-\s*([\d.]+)px\s*\)'), (m) {
       final px = double.parse(m.group(1)!);
       return '${(_viewportWidth - px).round()}px';
@@ -252,7 +250,6 @@ class _MobileCssParser {
     if (sel.startsWith('#')) {
       return el.attributes['id'] == sel.substring(1);
     }
-    // 处理逗号分隔的多重选择器 (如 img, video)
     return sel.split(',').any((s) => s.trim() == el.localName);
   }
 }
@@ -289,12 +286,11 @@ class _MediaQuery {
       return sw <= sh;
     }
     
-    // 新增：兼容高清屏媒体查询 -webkit-min-device-pixel-ratio 和 min-resolution
     final ratioMatch = RegExp(r'(-webkit-min-device-pixel-ratio|min-resolution):\s*([\d.]+)').firstMatch(condition);
     if (ratioMatch != null) {
       double requiredRatio = double.parse(ratioMatch.group(2)!);
       if (ratioMatch.group(1)!.contains('resolution')) {
-        requiredRatio = requiredRatio / 96.0; // 192dpi 约等于 2x
+        requiredRatio = requiredRatio / 96.0;
       }
       return devicePixelRatio >= requiredRatio;
     }
@@ -500,7 +496,6 @@ class _MyHomePageState extends State<MyHomePage> {
     return _styled(el, st);
   }
 
-  // 新增：统一处理交互特效、透明度、形变和溢出滚动
   Widget _wrapWithEffects(Widget child, Map<String, String> st) {
     final opacityVal = st['opacity'];
     if (opacityVal != null) {
@@ -752,7 +747,6 @@ class _MyHomePageState extends State<MyHomePage> {
     return r != null && r > 0 ? BorderRadius.circular(r) : null;
   }
 
-  // 新增：解析边框 (如 border-bottom)
   Border? _border(String? v) {
     if (v == null || v == 'none') {
       return null;
@@ -861,7 +855,8 @@ class _MyHomePageState extends State<MyHomePage> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             color: Colors.grey[100],
-            child: Text(_url.isNotEmpty ? _url : '就绪', style: const TextStyle(fontSize: 11, color: Colors.grey600), overflow: TextOverflow.ellipsis),
+            // 修复 864 行的拼写错误：Colors.grey600 -> Colors.grey[600]
+            child: Text(_url.isNotEmpty ? _url : '就绪', style: TextStyle(fontSize: 11, color: Colors.grey[600]), overflow: TextOverflow.ellipsis),
           ),
         ],
       ),
