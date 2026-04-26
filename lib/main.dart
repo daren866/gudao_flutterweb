@@ -19,7 +19,6 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
-        // 移动端字体
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
       ),
       home: const MyHomePage(title: '移动端浏览器 (CSS完全兼容)'),
@@ -36,12 +35,10 @@ class _MobileCssParser {
   final Map<dom.Element, Map<String, String>> _styleCache = {};
   String _baseUrl = '';
   
-  // 视口设置
-  double _viewportWidth = 375; // 默认iPhone宽度
-  double _viewportHeight = 812; // 默认iPhone高度
+  double _viewportWidth = 375;
+  double _viewportHeight = 812;
   double _devicePixelRatio = 2.0;
   
-  // 浏览器默认样式表（完整移动端重置）
   static final Map<String, Map<String, String>> _userAgentStyles = {
     '*': {
       'margin': '0',
@@ -62,12 +59,9 @@ class _MobileCssParser {
     'div': {'display': 'block'},
     'span': {'display': 'inline'},
     'p': {'display': 'block', 'margin': '0 0 16px 0'},
-    'h1': {'display': 'block', 'font-size': '2em', 'font-weight': 'bold', 'margin': '0.67em 0'},
-    'h2': {'display': 'block', 'font-size': '1.5em', 'font-weight': 'bold', 'margin': '0.83em 0'},
-    'h3': {'display': 'block', 'font-size': '1.17em', 'font-weight': 'bold', 'margin': '1em 0'},
-    'h4': {'display': 'block', 'font-size': '1em', 'font-weight': 'bold', 'margin': '1.33em 0'},
-    'h5': {'display': 'block', 'font-size': '0.83em', 'font-weight': 'bold', 'margin': '1.67em 0'},
-    'h6': {'display': 'block', 'font-size': '0.67em', 'font-weight': 'bold', 'margin': '2.33em 0'},
+    'h1': {'display': 'block', 'font-size': '2em', 'font-weight': 'bold'},
+    'h2': {'display': 'block', 'font-size': '1.5em', 'font-weight': 'bold'},
+    'h3': {'display': 'block', 'font-size': '1.17em', 'font-weight': 'bold'},
     'a': {
       'text-decoration': 'none',
       'color': '#007aff',
@@ -82,9 +76,6 @@ class _MobileCssParser {
       'max-width': '100%',
       'height': 'auto',
     },
-    'ul': {'display': 'block', 'margin': '16px 0', 'padding-left': '40px'},
-    'ol': {'display': 'block', 'margin': '16px 0', 'padding-left': '40px'},
-    'li': {'display': 'list-item'},
     'button': {
       'display': 'inline-block',
       'min-height': '44px',
@@ -93,7 +84,6 @@ class _MobileCssParser {
       'font-size': '16px',
       'border-radius': '8px',
       'border': 'none',
-      'cursor': 'pointer',
       '-webkit-appearance': 'none',
     },
     'input': {
@@ -114,15 +104,8 @@ class _MobileCssParser {
       'min-height': '44px',
       'font-size': '16px',
     },
-    'form': {'display': 'block'},
-    'table': {'display': 'table', 'width': '100%', 'border-collapse': 'collapse'},
-    'tr': {'display': 'table-row'},
-    'td': {'display': 'table-cell', 'padding': '8px'},
-    'th': {'display': 'table-cell', 'padding': '8px', 'font-weight': 'bold'},
-    'hr': {'display': 'block', 'border': '1px solid #eee', 'margin': '16px 0'},
   };
 
-  // 媒体查询存储
   final List<_MediaQuery> _mediaQueries = [];
 
   void clear() {
@@ -141,7 +124,6 @@ class _MobileCssParser {
     _devicePixelRatio = pixelRatio;
   }
 
-  // 从HTML的meta标签提取viewport
   void parseViewportMeta(String html) {
     final viewportRegex = RegExp(
       r'<meta[^>]+name="viewport"[^>]+content="([^"]*)"',
@@ -161,42 +143,26 @@ class _MobileCssParser {
       if (trimmed.startsWith('width=')) {
         final width = trimmed.substring(6);
         if (width == 'device-width') {
-          // 使用设备宽度，这里用MediaQuery获取
-          _viewportWidth = 375; // 默认
+          // 保持设备宽度
         } else {
           _viewportWidth = double.tryParse(width) ?? 375;
         }
-      } else if (trimmed.startsWith('initial-scale=')) {
-        final scale = double.tryParse(trimmed.substring(14)) ?? 1.0;
-        // 根据缩放调整视口
-      } else if (trimmed.startsWith('maximum-scale=')) {
-        // 记录最大缩放
       }
+      // initial-scale 和 maximum-scale 记录但不强制处理
     }
   }
 
-  // 主解析入口
   Future<void> parseFromHtml(String html, {http.Client? client, double screenWidth = 375}) async {
     clear();
-    
-    // 1. 解析viewport
     parseViewportMeta(html);
-    
-    // 2. 应用用户代理样式
     _applyUserAgentStyles();
-    
-    // 3. 解析<style>标签
     await _parseStyleTags(html);
     
-    // 4. 解析外部CSS
     if (client != null && _baseUrl.isNotEmpty) {
       await _fetchExternalStylesheets(html, client);
     }
     
-    // 5. 应用媒体查询
     _applyMediaQueries(screenWidth);
-    
-    // 6. 按优先级排序
     _rules.sort((a, b) => b.specificity.compareTo(a.specificity));
   }
 
@@ -257,16 +223,12 @@ class _MobileCssParser {
   }
 
   void _parseCssText(String cssText, CssSource source) {
-    // 移除注释
     final cleanCss = cssText.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
     
-    // 提取媒体查询
     _extractMediaQueries(cleanCss);
     
-    // 移除媒体查询块，只解析普通CSS
     var normalCss = cleanCss.replaceAll(RegExp(r'@media[^{]+\{[^}]*\}', dotAll: true), '');
     
-    // 匹配规则块
     final blockRegex = RegExp(r'([^{]+)\{([^}]*)\}');
     final blocks = blockRegex.allMatches(normalCss);
 
@@ -279,15 +241,10 @@ class _MobileCssParser {
       final properties = _parseProperties(propertiesStr);
       if (properties.isEmpty) continue;
       
-      // 处理激活态、悬停态等
-      final isPseudoClass = selectorsStr.contains(':');
       final isActive = selectorsStr.contains(':active');
       final isHover = selectorsStr.contains(':hover');
       
-      String cleanSelector = selectorsStr;
-      if (isPseudoClass) {
-        cleanSelector = selectorsStr.replaceAll(RegExp(r':(active|hover|focus|visited)'), '');
-      }
+      String cleanSelector = selectorsStr.replaceAll(RegExp(r':(active|hover|focus|visited)'), '');
       
       final selectors = cleanSelector.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty);
       
@@ -315,7 +272,6 @@ class _MobileCssParser {
       
       final query = _MediaQuery(condition: condition, source: CssSource.styleTag);
       
-      // 解析媒体查询内的规则
       final blockRegex = RegExp(r'([^{]+)\{([^}]*)\}');
       final blocks = blockRegex.allMatches(rulesCss);
       
@@ -363,51 +319,16 @@ class _MobileCssParser {
 
   int _calculateSpecificity(String selector) {
     int score = 0;
-    
-    // ID选择器
     score += '#'.allMatches(selector).length * 10000;
-    
-    // 类选择器、属性选择器、伪类
     score += '.'.allMatches(selector).length * 100;
     score += '['.allMatches(selector).length * 100;
     score += ':'.allMatches(selector).length * 10;
-    
-    // 元素选择器
     if (RegExp(r'^[a-zA-Z]+').hasMatch(selector)) {
       score += 1;
     }
-    
     return score;
   }
 
-  bool _matchesMediaQuery(String condition, double screenWidth) {
-    // 解析常用媒体查询条件
-    if (condition.contains('max-width')) {
-      final match = RegExp(r'max-width:\s*(\d+)px').firstMatch(condition);
-      if (match != null) {
-        final maxWidth = double.parse(match.group(1)!);
-        return screenWidth <= maxWidth;
-      }
-    }
-    if (condition.contains('min-width')) {
-      final match = RegExp(r'min-width:\s*(\d+)px').firstMatch(condition);
-      if (match != null) {
-        final minWidth = double.parse(match.group(1)!);
-        return screenWidth >= minWidth;
-      }
-    }
-    if (condition.contains('orientation')) {
-      if (condition.contains('landscape')) {
-        return screenWidth > _viewportHeight;
-      }
-      if (condition.contains('portrait')) {
-        return screenWidth <= _viewportHeight;
-      }
-    }
-    return false;
-  }
-
-  // 获取元素完整样式（合并所有来源）
   Map<String, String> getComputedStyle(dom.Element element) {
     if (_styleCache.containsKey(element)) {
       return Map.from(_styleCache[element]!);
@@ -415,7 +336,6 @@ class _MobileCssParser {
     
     final styles = <String, String>{};
     
-    // 1. 应用用户代理样式
     if (_userAgentStyles.containsKey('*')) {
       styles.addAll(_userAgentStyles['*']!);
     }
@@ -425,20 +345,17 @@ class _MobileCssParser {
       styles.addAll(_userAgentStyles[tagName]!);
     }
     
-    // 2. 应用CSS规则（按优先级）
     for (final rule in _rules) {
       if (_selectorMatches(element, rule.selector)) {
         styles.addAll(rule.properties);
       }
     }
     
-    // 3. 内联样式（最高优先级）
     final inlineStyle = element.attributes['style'];
     if (inlineStyle != null && inlineStyle.isNotEmpty) {
       styles.addAll(_parseProperties(inlineStyle));
     }
     
-    // 4. 处理calc()、vw、vh等单位
     styles.forEach((key, value) {
       styles[key] = _resolveCssValue(value);
     });
@@ -448,45 +365,28 @@ class _MobileCssParser {
   }
 
   String _resolveCssValue(String value) {
-    // 处理 calc()
     if (value.contains('calc(')) {
       value = value.replaceAllMapped(RegExp(r'calc\((.*?)\)'), (match) {
-        final expression = match.group(1) ?? '';
-        return _evaluateCalc(expression);
+        return match.group(1) ?? '';
       });
     }
     
-    // 处理 vw
     value = value.replaceAllMapped(RegExp(r'(\d+\.?\d*)vw'), (match) {
       final num = double.parse(match.group(1)!);
       return '${(num / 100 * _viewportWidth).round()}px';
     });
     
-    // 处理 vh
     value = value.replaceAllMapped(RegExp(r'(\d+\.?\d*)vh'), (match) {
       final num = double.parse(match.group(1)!);
       return '${(num / 100 * _viewportHeight).round()}px';
     });
     
-    // 处理 rem (基准14px)
     value = value.replaceAllMapped(RegExp(r'(\d+\.?\d*)rem'), (match) {
       final num = double.parse(match.group(1)!);
       return '${(num * 14).round()}px';
     });
     
     return value;
-  }
-
-  String _evaluateCalc(String expression) {
-    try {
-      // 简单处理 calc(100% - 30px) 这类表达式
-      expression = expression.replaceAll('%', '');
-      expression = expression.replaceAll('px', '');
-      // 这里可以做更复杂的计算
-      return expression;
-    } catch (e) {
-      return '0';
-    }
   }
 
   bool _selectorMatches(dom.Element element, String selector) {
@@ -537,7 +437,6 @@ class _MobileCssParser {
   }
 }
 
-// CSS规则类
 class _CssRule {
   final String selector;
   final Map<String, String> properties;
@@ -642,7 +541,6 @@ class _MyHomePageState extends State<MyHomePage> {
       
       @media (max-width: 375px) {
         .container { padding: 10px; }
-        .font-small { font-size: 13px; }
       }
     </style>
     
@@ -697,7 +595,6 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _initializeCssParser() async {
-    // 获取屏幕尺寸用于媒体查询
     final screenSize = MediaQuery.of(context).size;
     final pixelRatio = MediaQuery.of(context).devicePixelRatio;
     
@@ -835,7 +732,6 @@ class _MyHomePageState extends State<MyHomePage> {
   Widget? _buildCustomWidget(dom.Element element) {
     final tag = element.localName;
     
-    // 表单控件
     if (tag == 'input') return _buildHtmlInput(element);
     if (tag == 'button') return _buildHtmlButton(element);
     if (tag == 'select') return _buildHtmlSelect(element);
@@ -845,10 +741,8 @@ class _MyHomePageState extends State<MyHomePage> {
       return const SizedBox.shrink();
     }
     
-    // 获取计算后的样式
     final computedStyle = cssParser.getComputedStyle(element);
     
-    // 处理display属性
     final display = computedStyle['display'];
     
     if (display == 'flex' || display == 'inline-flex') {
@@ -858,17 +752,14 @@ class _MyHomePageState extends State<MyHomePage> {
       return _buildGridLayout(element, computedStyle);
     }
     
-    // 处理图片
     if (tag == 'img') {
       return _buildImageWidget(element, computedStyle);
     }
     
-    // 处理链接
     if (tag == 'a') {
       return _buildLinkWidget(element, computedStyle);
     }
     
-    // 应用通用样式
     return _buildStyledWidget(element, computedStyle);
   }
 
@@ -881,26 +772,14 @@ class _MyHomePageState extends State<MyHomePage> {
     final mainAxisAlignment = _parseMainAxisAlignment(styles['justify-content']);
     final crossAxisAlignment = _parseCrossAxisAlignment(styles['align-items']);
     
-    // 解析间距
     double? gap = _parsePxValue(styles['gap']);
-    if (gap == null) {
-      // 兼容 row-gap 和 column-gap
-      gap = _parsePxValue(styles['row-gap']) ?? _parsePxValue(styles['column-gap']);
-    }
     
-    // 解析边距和圆角
     final padding = _parseEdgeInsets(styles['padding']);
     final margin = _parseEdgeInsets(styles['margin']);
     final borderRadius = _parseBorderRadius(styles['border-radius']);
     
-    // 解析背景
     final bgColor = _parseColor(styles['background-color']);
-    final bgDecoration = _parseBackground(styles);
-    
-    // 解析阴影
     final boxShadow = _parseBoxShadow(styles['box-shadow']);
-    
-    // 解析最大宽度（响应式）
     final maxWidth = _parsePxValue(styles['max-width']);
     
     final children = element.children
@@ -928,7 +807,6 @@ class _MyHomePageState extends State<MyHomePage> {
     }
 
     return Container(
-      width: styles['width'] != null ? double.tryParse(styles['width']!) : null,
       margin: margin,
       padding: padding,
       constraints: maxWidth != null ? BoxConstraints(maxWidth: maxWidth) : null,
@@ -936,7 +814,6 @@ class _MyHomePageState extends State<MyHomePage> {
         color: bgColor,
         borderRadius: borderRadius,
         boxShadow: boxShadow,
-        ...bgDecoration,
       ),
       child: flexWidget,
     );
@@ -996,30 +873,25 @@ class _MyHomePageState extends State<MyHomePage> {
     return Container(
       margin: margin,
       constraints: maxWidth != null ? BoxConstraints(maxWidth: maxWidth) : const BoxConstraints(maxWidth: double.infinity),
-      decoration: BoxDecoration(
-        borderRadius: borderRadius,
-        image: src.isNotEmpty
-            ? DecorationImage(
-                image: NetworkImage(src),
+      child: src.isNotEmpty
+          ? ClipRRect(
+              borderRadius: borderRadius ?? BorderRadius.zero,
+              child: Image.network(
+                src,
                 fit: BoxFit.contain,
-                onError: (_, __) {},
-              )
-            : null,
-      ),
-      child: src.isEmpty
-          ? Container(
+                errorBuilder: (_, __, ___) {
+                  return Container(
+                    height: 200,
+                    color: Colors.grey[300],
+                    child: const Center(child: Icon(Icons.broken_image)),
+                  );
+                },
+              ),
+            )
+          : Container(
               height: 200,
               color: Colors.grey[300],
               child: Center(child: Text(alt.isNotEmpty ? alt : '图片')),
-            )
-          : AspectRatio(
-              aspectRatio: 16 / 9,
-              child: ClipRRect(
-                borderRadius: borderRadius ?? BorderRadius.zero,
-                child: Image.network(src, fit: BoxFit.contain, errorBuilder: (_, __, ___) {
-                  return Container(color: Colors.grey[300], child: const Icon(Icons.broken_image));
-                }),
-              ),
             ),
     );
   }
@@ -1045,7 +917,7 @@ class _MyHomePageState extends State<MyHomePage> {
         child: HtmlWidget(
           element.outerHtml,
           customWidgetBuilder: _buildCustomWidget,
-          textStyle: TextStyle(color: color, decoration: styles['text-decoration'] == 'underline' ? TextDecoration.underline : null),
+          textStyle: TextStyle(color: color),
         ),
       ),
     );
@@ -1058,751 +930,6 @@ class _MyHomePageState extends State<MyHomePage> {
     final borderRadius = _parseBorderRadius(styles['border-radius']);
     final boxShadow = _parseBoxShadow(styles['box-shadow']);
     final maxWidth = _parsePxValue(styles['max-width']);
-    final minHeight = _parsePxValue(styles['min-height']) ?? 44;
     
     if (bgColor != null || padding != EdgeInsets.zero || margin != EdgeInsets.zero || borderRadius != null || maxWidth != null) {
       return Container(
-        margin: margin,
-        padding: padding,
-        constraints: BoxConstraints(
-          maxWidth: maxWidth ?? double.infinity,
-          minHeight: minHeight,
-        ),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: borderRadius,
-          boxShadow: boxShadow,
-        ),
-        child: HtmlWidget(
-          element.outerHtml,
-          customWidgetBuilder: _buildCustomWidget,
-        ),
-      );
-    }
-    
-    return null;
-  }
-
-  // ==================================================================
-  // 表单控件构建器
-  // ==================================================================
-  Widget? _buildHtmlInput(dom.Element element) {
-    final type = element.attributes['type']?.toLowerCase() ?? 'text';
-    final name = element.attributes['name'] ?? '';
-    final value = element.attributes['value'] ?? '';
-    final placeholder = element.attributes['placeholder'] ?? '';
-    final formData = _getFormDataForElement(element);
-    final styles = cssParser.getComputedStyle(element);
-    final minHeight = _parsePxValue(styles['min-height']) ?? 44;
-    final fontSize = _parsePxValue(styles['font-size']) ?? 16;
-    
-    return Padding(
-      padding: _parseEdgeInsets(styles['padding']),
-      child: _InputWrapper(
-        type: type,
-        placeholder: placeholder,
-        value: value,
-        name: name,
-        formData: formData,
-        minHeight: minHeight,
-        fontSize: fontSize,
-        onSubmit: formData != null ? () => _submitForm(formData) : null,
-      ),
-    );
-  }
-
-  Widget? _buildHtmlButton(dom.Element element) {
-    final type = element.attributes['type']?.toLowerCase() ?? 'button';
-    final text = element.innerHtml;
-    final formData = _getFormDataForElement(element);
-    final styles = cssParser.getComputedStyle(element);
-    final minHeight = _parsePxValue(styles['min-height']) ?? 44;
-    
-    return Padding(
-      padding: _parseEdgeInsets(styles['padding']),
-      child: SizedBox(
-        height: minHeight,
-        child: _FormButtonWrapper(
-          type: type,
-          text: text,
-          formData: formData,
-          onSubmit: formData != null ? () => _submitForm(formData) : null,
-        ),
-      ),
-    );
-  }
-
-  Widget? _buildHtmlSelect(dom.Element element) {
-    final name = element.attributes['name'] ?? '';
-    final formData = _getFormDataForElement(element);
-    final options = element.getElementsByTagName('option');
-    final items = options
-        .map((opt) => MapEntry(opt.text.trim(), opt.attributes['value'] ?? opt.text.trim()))
-        .toList();
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: _SelectWrapper(items: items, name: name, formData: formData),
-    );
-  }
-
-  Widget? _buildHtmlTextarea(dom.Element element) {
-    final name = element.attributes['name'] ?? '';
-    final placeholder = element.attributes['placeholder'] ?? '';
-    final value = element.text.trim();
-    final formData = _getFormDataForElement(element);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: _TextareaWrapper(name: name, placeholder: placeholder, value: value, formData: formData),
-    );
-  }
-
-  // ==================================================================
-  // CSS属性解析器（增强版）
-  // ==================================================================
-  List<Widget> _wrapWithGap(List<Widget> children, double? gap, Axis direction) {
-    if (gap == null || gap == 0 || children.isEmpty) return children;
-    return List.generate(children.length * 2 - 1, (index) {
-      if (index.isOdd) {
-        return SizedBox(
-          width: direction == Axis.horizontal ? gap : 0,
-          height: direction == Axis.vertical ? gap : 0,
-        );
-      }
-      return children[index ~/ 2];
-    });
-  }
-
-  double? _parsePxValue(String? value) {
-    if (value == null || value == 'auto' || value == 'none') return null;
-    if (value == '0') return 0;
-    
-    // 处理 calc()
-    if (value.contains('calc(')) {
-      value = value.replaceAll('calc(', '').replaceAll(')', '');
-    }
-    
-    // 提取数字
-    final match = RegExp(r'(-?[\d.]+)').firstMatch(value);
-    if (match != null) {
-      return double.tryParse(match.group(1)!);
-    }
-    return null;
-  }
-
-  Color? _parseColor(String? value) {
-    if (value == null || value == 'transparent') return Colors.transparent;
-    
-    // 十六进制颜色
-    if (value.startsWith('#')) {
-      final hex = value.substring(1);
-      if (hex.length == 3) {
-        return Color(int.parse('FF${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}', radix: 16));
-      }
-      if (hex.length == 6) {
-        return Color(int.parse('FF$hex', radix: 16));
-      }
-      if (hex.length == 8) {
-        return Color(int.parse(hex, radix: 16));
-      }
-    }
-    
-    // RGB/RGBA
-    if (value.startsWith('rgb')) {
-      final match = RegExp(r'rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)').firstMatch(value);
-      if (match != null) {
-        final r = int.parse(match.group(1)!);
-        final g = int.parse(match.group(2)!);
-        final b = int.parse(match.group(3)!);
-        final a = double.tryParse(match.group(4) ?? '1') ?? 1.0;
-        return Color.fromRGBO(r, g, b, a);
-      }
-    }
-    
-    // 预定义颜色
-    final colorMap = {
-      'white': Colors.white,
-      'black': Colors.black,
-      'red': Colors.red,
-      'blue': Colors.blue,
-      'green': Colors.green,
-      'grey': Colors.grey,
-      'gray': Colors.grey,
-      'transparent': Colors.transparent,
-    };
-    
-    return colorMap[value.toLowerCase()];
-  }
-
-  EdgeInsets _parseEdgeInsets(String? value) {
-    if (value == null || value == '0') return EdgeInsets.zero;
-    
-    final parts = value.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
-    
-    double? top, right, bottom, left;
-    
-    if (parts.length == 1) {
-      final val = _parsePxValue(parts[0]) ?? 0;
-      top = right = bottom = left = val;
-    } else if (parts.length == 2) {
-      top = bottom = _parsePxValue(parts[0]) ?? 0;
-      right = left = _parsePxValue(parts[1]) ?? 0;
-    } else if (parts.length == 3) {
-      top = _parsePxValue(parts[0]) ?? 0;
-      right = left = _parsePxValue(parts[1]) ?? 0;
-      bottom = _parsePxValue(parts[2]) ?? 0;
-    } else if (parts.length == 4) {
-      top = _parsePxValue(parts[0]) ?? 0;
-      right = _parsePxValue(parts[1]) ?? 0;
-      bottom = _parsePxValue(parts[2]) ?? 0;
-      left = _parsePxValue(parts[3]) ?? 0;
-    }
-    
-    if (top == null && right == null && bottom == null && left == null) {
-      final val = _parsePxValue(value) ?? 0;
-      return EdgeInsets.all(val);
-    }
-    
-    return EdgeInsets.fromLTRB(
-      left ?? 0,
-      top ?? 0,
-      right ?? 0,
-      bottom ?? 0,
-    );
-  }
-
-  BorderRadius? _parseBorderRadius(String? value) {
-    if (value == null) return null;
-    final radius = _parsePxValue(value);
-    if (radius != null && radius > 0) {
-      return BorderRadius.circular(radius);
-    }
-    return null;
-  }
-
-  List<BoxShadow>? _parseBoxShadow(String? value) {
-    if (value == null || value == 'none') return null;
-    
-    final match = RegExp(r'([\d.]+)px\s+([\d.]+)px\s+([\d.]+)px\s+rgba?\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)').firstMatch(value);
-    if (match != null) {
-      final offsetX = double.parse(match.group(1)!);
-      final offsetY = double.parse(match.group(2)!);
-      final blur = double.parse(match.group(3)!);
-      final r = int.parse(match.group(4)!);
-      final g = int.parse(match.group(5)!);
-      final b = int.parse(match.group(6)!);
-      final a = double.parse(match.group(7)!);
-      
-      return [
-        BoxShadow(
-          offset: Offset(offsetX, offsetY),
-          blurRadius: blur,
-          color: Color.fromRGBO(r, g, b, a),
-        ),
-      ];
-    }
-    return null;
-  }
-
-  Map<String, dynamic> _parseBackground(Map<String, String> styles) {
-    final map = <String, dynamic>{};
-    
-    // 处理渐变等
-    final bgImage = styles['background-image'];
-    if (bgImage != null && bgImage.startsWith('linear-gradient')) {
-      // 简单渐变处理
-      map['gradient'] = const LinearGradient(colors: [Colors.blue, Colors.purple]);
-    }
-    
-    return map;
-  }
-
-  MainAxisAlignment _parseMainAxisAlignment(String? value) {
-    switch (value) {
-      case 'center': return MainAxisAlignment.center;
-      case 'flex-end': return MainAxisAlignment.end;
-      case 'space-between': return MainAxisAlignment.spaceBetween;
-      case 'space-around': return MainAxisAlignment.spaceAround;
-      case 'space-evenly': return MainAxisAlignment.spaceEvenly;
-      default: return MainAxisAlignment.start;
-    }
-  }
-
-  CrossAxisAlignment _parseCrossAxisAlignment(String? value) {
-    switch (value) {
-      case 'center': return CrossAxisAlignment.center;
-      case 'flex-end': return CrossAxisAlignment.end;
-      case 'stretch': return CrossAxisAlignment.stretch;
-      case 'baseline': return CrossAxisAlignment.baseline;
-      default: return CrossAxisAlignment.center;
-    }
-  }
-
-  // ==================================================================
-  // UI主框架（移动端优化）
-  // ==================================================================
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title, style: const TextStyle(fontSize: 16)),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // 地址栏
-            Container(
-              padding: const EdgeInsets.all(8),
-              color: Colors.white,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _urlController,
-                      onSubmitted: _fetchWebContent,
-                      keyboardType: TextInputType.url,
-                      style: const TextStyle(fontSize: 14),
-                      decoration: InputDecoration(
-                        hintText: '输入网址...',
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide.none,
-                        ),
-                        filled: true,
-                        fillColor: Colors.grey[100],
-                        prefixIcon: const Icon(Icons.search, size: 20),
-                        suffixIcon: _urlController.text.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.clear, size: 18),
-                                onPressed: () => _urlController.clear(),
-                              )
-                            : null,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    height: 40,
-                    width: 60,
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : () => _fetchWebContent(_urlController.text),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.zero,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                      ),
-                      child: _isLoading
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Text('前往', style: TextStyle(fontSize: 13)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            
-            // 加载指示器
-            if (_isLoading)
-              const LinearProgressIndicator(minHeight: 2, backgroundColor: Colors.transparent),
-            
-            // 内容区域
-            Expanded(
-              child: Container(
-                color: Colors.white,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(12),
-                  child: HtmlWidget(
-                    _htmlContent,
-                    onTapUrl: (url) {
-                      _fetchWebContent(url);
-                      return true;
-                    },
-                    customWidgetBuilder: _buildCustomWidget,
-                    textStyle: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[800],
-                      height: 1.5,
-                    ),
-                    customStylesBuilder: (element) {
-                      final tag = element.localName;
-                      if (tag == 'p') {
-                        return {'margin-bottom': '12px'};
-                      }
-                      return {};
-                    },
-                  ),
-                ),
-              ),
-            ),
-            
-            // 底部状态栏
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                border: Border(top: BorderSide(color: Colors.grey[300]!)),
-              ),
-              child: Text(
-                _currentUrl.isNotEmpty ? _currentUrl : '就绪',
-                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ======================================================================
-// 表单组件
-// ======================================================================
-class _InputWrapper extends StatefulWidget {
-  final String type;
-  final String placeholder;
-  final String value;
-  final String name;
-  final _FormData? formData;
-  final double minHeight;
-  final double fontSize;
-  final VoidCallback? onSubmit;
-
-  const _InputWrapper({
-    required this.type,
-    required this.placeholder,
-    required this.value,
-    required this.name,
-    this.formData,
-    this.minHeight = 44,
-    this.fontSize = 16,
-    this.onSubmit,
-  });
-
-  @override
-  State<_InputWrapper> createState() => _InputWrapperState();
-}
-
-class _InputWrapperState extends State<_InputWrapper> {
-  late TextEditingController _controller;
-  bool _isChecked = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.value);
-    if (widget.formData != null && widget.name.isNotEmpty) {
-      if (widget.type == 'checkbox') {
-        _isChecked = widget.value.isNotEmpty;
-        widget.formData!.setValue(widget.name, _isChecked ? widget.value : '');
-      } else if (widget.type == 'radio') {
-        _isChecked = widget.formData!.values[widget.name] == widget.value;
-      } else {
-        widget.formData!.values[widget.name] = widget.value;
-      }
-    }
-    _controller.addListener(_onTextChanged);
-    widget.formData?.addListener(_onFormChanged);
-  }
-
-  void _onTextChanged() {
-    if (widget.formData != null &&
-        widget.name.isNotEmpty &&
-        !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) {
-      widget.formData!.values[widget.name] = _controller.text;
-    }
-  }
-
-  void _onFormChanged() {
-    if (widget.type == 'radio' && widget.formData != null && mounted) {
-      setState(() => _isChecked = widget.formData!.values[widget.name] == widget.value);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.removeListener(_onTextChanged);
-    _controller.dispose();
-    widget.formData?.removeListener(_onFormChanged);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final inputDecoration = InputDecoration(
-      hintText: widget.placeholder,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide(color: Colors.grey[300]!),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide(color: Colors.grey[300]!),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: Colors.blue),
-      ),
-    );
-
-    switch (widget.type) {
-      case 'text':
-      case 'search':
-      case 'email':
-      case 'password':
-      case 'url':
-      case 'tel':
-      case 'number':
-      case 'date':
-        return SizedBox(
-          height: widget.minHeight,
-          child: TextField(
-            controller: _controller,
-            obscureText: widget.type == 'password',
-            style: TextStyle(fontSize: widget.fontSize),
-            decoration: inputDecoration,
-          ),
-        );
-      case 'hidden':
-        return const SizedBox.shrink();
-      case 'submit':
-        return SizedBox(
-          height: widget.minHeight,
-          child: ElevatedButton(
-            onPressed: widget.onSubmit,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            child: Text(widget.value.isNotEmpty ? widget.value : '提交'),
-          ),
-        );
-      case 'checkbox':
-        return Row(
-          children: [
-            Checkbox(
-              value: _isChecked,
-              activeColor: Colors.blue,
-              onChanged: (val) {
-                setState(() => _isChecked = val ?? false);
-                if (widget.formData != null && widget.name.isNotEmpty) {
-                  widget.formData!.setValue(widget.name, _isChecked ? widget.value : 'true');
-                }
-              },
-            ),
-            Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name),
-          ],
-        );
-      case 'radio':
-        return GestureDetector(
-          onTap: () {
-            if (widget.formData != null && widget.name.isNotEmpty) {
-              widget.formData!.setValue(widget.name, widget.value);
-            }
-          },
-          child: Row(
-            children: [
-              Container(
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: _isChecked ? Colors.blue : Colors.grey,
-                    width: 2,
-                  ),
-                ),
-                child: _isChecked
-                    ? const Center(
-                        child: CircleAvatar(
-                          radius: 6,
-                          backgroundColor: Colors.blue,
-                        ),
-                      )
-                    : null,
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value),
-              ),
-            ],
-          ),
-        );
-      default:
-        return SizedBox(
-          height: widget.minHeight,
-          child: TextField(
-            controller: _controller,
-            style: TextStyle(fontSize: widget.fontSize),
-            decoration: inputDecoration,
-          ),
-        );
-    }
-  }
-}
-
-class _FormButtonWrapper extends StatelessWidget {
-  final String type;
-  final String text;
-  final _FormData? formData;
-  final VoidCallback? onSubmit;
-
-  const _FormButtonWrapper({
-    required this.type,
-    required this.text,
-    this.formData,
-    this.onSubmit,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final style = ElevatedButton.styleFrom(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-    );
-
-    switch (type) {
-      case 'submit':
-        return ElevatedButton(
-          onPressed: onSubmit,
-          style: style.copyWith(
-            backgroundColor: WidgetStateProperty.all(Colors.blue),
-            foregroundColor: WidgetStateProperty.all(Colors.white),
-          ),
-          child: Text(text.isEmpty ? '提交' : text),
-        );
-      case 'reset':
-        return ElevatedButton(
-          onPressed: () => formData?.values.clear(),
-          style: style.copyWith(
-            backgroundColor: WidgetStateProperty.all(Colors.grey[400]),
-            foregroundColor: WidgetStateProperty.all(Colors.white),
-          ),
-          child: Text(text.isEmpty ? '重置' : text),
-        );
-      default:
-        return ElevatedButton(
-          onPressed: () {},
-          style: style.copyWith(
-            backgroundColor: WidgetStateProperty.all(Colors.white),
-            foregroundColor: WidgetStateProperty.all(Colors.black87),
-            side: WidgetStateProperty.all(const BorderSide(color: Colors.grey)),
-          ),
-          child: Text(text.isEmpty ? '按钮' : text),
-        );
-    }
-  }
-}
-
-class _SelectWrapper extends StatefulWidget {
-  final List<MapEntry<String, String>> items;
-  final String name;
-  final _FormData? formData;
-
-  const _SelectWrapper({
-    required this.items,
-    required this.name,
-    this.formData,
-  });
-
-  @override
-  State<_SelectWrapper> createState() => _SelectWrapperState();
-}
-
-class _SelectWrapperState extends State<_SelectWrapper> {
-  String? _selectedValue;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.items.isNotEmpty) _selectedValue = widget.items.first.value;
-    if (widget.formData != null && widget.name.isNotEmpty) {
-      widget.formData!.values[widget.name] = _selectedValue ?? '';
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return DropdownButtonFormField<String>(
-      value: widget.items.any((e) => e.value == _selectedValue) ? _selectedValue : null,
-      decoration: InputDecoration(
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      ),
-      items: widget.items
-          .map((item) => DropdownMenuItem<String>(
-                value: item.value,
-                child: Text(item.key),
-              ))
-          .toList(),
-      onChanged: (val) {
-        setState(() => _selectedValue = val);
-        if (widget.formData != null && widget.name.isNotEmpty) {
-          widget.formData!.values[widget.name] = val ?? '';
-        }
-      },
-    );
-  }
-}
-
-class _TextareaWrapper extends StatefulWidget {
-  final String name;
-  final String placeholder;
-  final String value;
-  final _FormData? formData;
-
-  const _TextareaWrapper({
-    required this.name,
-    required this.placeholder,
-    required this.value,
-    this.formData,
-  });
-
-  @override
-  State<_TextareaWrapper> createState() => _TextareaWrapperState();
-}
-
-class _TextareaWrapperState extends State<_TextareaWrapper> {
-  late TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.value);
-    if (widget.formData != null && widget.name.isNotEmpty) {
-      widget.formData!.values[widget.name] = widget.value;
-    }
-    _controller.addListener(() {
-      if (widget.formData != null && widget.name.isNotEmpty) {
-        widget.formData!.values[widget.name] = _controller.text;
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => TextField(
-        controller: _controller,
-        maxLines: 4,
-        decoration: InputDecoration(
-          hintText: widget.placeholder,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      );
-}
