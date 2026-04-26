@@ -230,7 +230,6 @@ class _MobileCssParser {
       final px = double.parse(m.group(1)!);
       return '${(_viewportWidth - px).round()}px';
     });
-    
     v = v.replaceAllMapped(RegExp(r'([\d.]+)vw'), (m) => '${(double.parse(m.group(1)!) / 100 * _viewportWidth).round()}px');
     v = v.replaceAllMapped(RegExp(r'([\d.]+)vh'), (m) => '${(double.parse(m.group(1)!) / 100 * _viewportHeight).round()}px');
     v = v.replaceAllMapped(RegExp(r'([\d.]+)rem'), (m) => '${(double.parse(m.group(1)!) * 14).round()}px');
@@ -605,8 +604,9 @@ class _MyHomePageState extends State<MyHomePage> {
         margin: _insets(st['margin']),
         padding: _insets(st['padding']),
         constraints: BoxConstraints(minHeight: _px(st['min-height']) ?? 44),
+        // 修复死循环：改为 innerHtml
         child: HtmlWidget(
-          el.outerHtml,
+          el.innerHtml,
           customWidgetBuilder: _buildCustom,
           textStyle: TextStyle(color: _color(st['color']) ?? const Color(0xFF007AFF)),
         ),
@@ -621,11 +621,13 @@ class _MyHomePageState extends State<MyHomePage> {
     final m = _insets(st['margin']);
     final r = _radius(st['border-radius']);
     final border = _border(st['border-bottom']);
+    final shadow = _shadow(st['box-shadow']);
     final maxWidth = _px(st['max-width']);
     final noWrap = st['white-space'] == 'nowrap';
 
+    // 修复死循环：改为 innerHtml
     Widget child = HtmlWidget(
-      el.outerHtml,
+      el.innerHtml,
       customWidgetBuilder: _buildCustom,
       textStyle: TextStyle(
         fontSize: 14, 
@@ -633,12 +635,17 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
     );
 
-    if (bg != null || p != EdgeInsets.zero || m != EdgeInsets.zero || r != null || border != null || maxWidth != null) {
+    if (bg != null || p != EdgeInsets.zero || m != EdgeInsets.zero || r != null || border != null || shadow != null || maxWidth != null) {
       child = Container(
         margin: m,
         padding: p,
         constraints: BoxConstraints(maxWidth: maxWidth ?? double.infinity),
-        decoration: BoxDecoration(color: bg, borderRadius: r, border: border),
+        decoration: BoxDecoration(
+          color: bg, 
+          borderRadius: r, 
+          border: border,
+          boxShadow: shadow // 补全阴影
+        ),
         child: child,
       );
     }
@@ -709,9 +716,16 @@ class _MyHomePageState extends State<MyHomePage> {
     return m != null ? double.tryParse(m.group(1)!) : null;
   }
 
+  // 增强：支持英文单词、rgb/rgba 格式颜色
   Color? _color(String? v) {
-    if (v == null) {
+    if (v == null || v == 'transparent') {
       return null;
+    }
+    if (v == 'white') {
+      return const Color(0xFFFFFFFF);
+    }
+    if (v == 'black') {
+      return const Color(0xFF000000);
     }
     if (v.startsWith('#')) {
       final h = v.substring(1);
@@ -721,6 +735,15 @@ class _MyHomePageState extends State<MyHomePage> {
       if (h.length == 3) {
         return Color(int.parse('FF${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}', radix: 16));
       }
+    }
+    final rgbMatch = RegExp(r'rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)').firstMatch(v);
+    if (rgbMatch != null) {
+      return Color.fromRGBO(
+        int.parse(rgbMatch.group(1)!),
+        int.parse(rgbMatch.group(2)!),
+        int.parse(rgbMatch.group(3)!),
+        rgbMatch.group(4) != null ? double.parse(rgbMatch.group(4)!) : 1.0,
+      );
     }
     return null;
   }
@@ -855,7 +878,7 @@ class _MyHomePageState extends State<MyHomePage> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             color: Colors.grey[100],
-            // 修复 864 行的拼写错误：Colors.grey600 -> Colors.grey[600]
+            // 修复拼写错误导致的状态栏灰字失效
             child: Text(_url.isNotEmpty ? _url : '就绪', style: TextStyle(fontSize: 11, color: Colors.grey[600]), overflow: TextOverflow.ellipsis),
           ),
         ],
