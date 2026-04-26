@@ -59,7 +59,9 @@ class _MobileCssParser {
     _styleCache.clear();
   }
 
-  void setBaseUrl(String url) => _baseUrl = url;
+  void setBaseUrl(String url) {
+    _baseUrl = url;
+  }
 
   void setViewport({required double width, required double height, double pixelRatio = 2.0}) {
     _viewportWidth = width;
@@ -83,7 +85,9 @@ class _MobileCssParser {
     parseViewportMeta(html);
     _applyUserAgentStyles();
     await _parseStyleTags(html);
-    if (client != null && _baseUrl.isNotEmpty) await _fetchExternalStylesheets(html, client);
+    if (client != null && _baseUrl.isNotEmpty) {
+      await _fetchExternalStylesheets(html, client);
+    }
     _applyMediaQueries(screenWidth);
     _rules.sort((a, b) => b.specificity.compareTo(a.specificity));
   }
@@ -104,19 +108,27 @@ class _MobileCssParser {
     final doc = html_parser.parse(html);
     for (final link in doc.querySelectorAll('link[rel="stylesheet"]')) {
       final href = link.attributes['href'];
-      if (href == null || href.isEmpty) continue;
+      if (href == null || href.isEmpty) {
+        continue;
+      }
       try {
         final url = _resolveUrl(href);
         final res = await client.get(Uri.parse(url), headers: {'User-Agent': 'Mozilla/5.0'}).timeout(const Duration(seconds: 5));
-        if (res.statusCode == 200) _parseCssText(res.body, CssSource.external);
+        if (res.statusCode == 200) {
+          _parseCssText(res.body, CssSource.external);
+        }
       } catch (_) {}
     }
   }
 
   String _resolveUrl(String url) {
-    if (url.startsWith('http')) return url;
+    if (url.startsWith('http')) {
+      return url;
+    }
     final uri = Uri.parse(_baseUrl);
-    if (url.startsWith('/')) return '${uri.scheme}://${uri.host}$url';
+    if (url.startsWith('/')) {
+      return '${uri.scheme}://${uri.host}$url';
+    }
     final i = uri.path.lastIndexOf('/');
     return '${uri.scheme}://${uri.host}${i > 0 ? uri.path.substring(0, i) : ''}/$url';
   }
@@ -128,7 +140,9 @@ class _MobileCssParser {
     for (final b in RegExp(r'([^{]+)\{([^}]*)\}').allMatches(normal)) {
       final sel = b.group(1)?.trim() ?? '';
       final props = _parseProps(b.group(2)?.trim() ?? '');
-      if (props.isEmpty) continue;
+      if (props.isEmpty) {
+        continue;
+      }
       final cleanSel = sel.replaceAll(RegExp(r':(active|hover|focus|visited)'), '');
       for (final s in cleanSel.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty)) {
         _rules.add(_CssRule(selector: s, properties: Map.from(props), specificity: _spec(s), source: source));
@@ -152,7 +166,9 @@ class _MobileCssParser {
 
   void _applyMediaQueries(double sw) {
     for (final q in _mediaQueries) {
-      if (q.matches(sw, _viewportHeight)) _rules.addAll(q.rules);
+      if (q.matches(sw, _viewportHeight)) {
+        _rules.addAll(q.rules);
+      }
     }
   }
 
@@ -169,22 +185,36 @@ class _MobileCssParser {
     s += '#'.allMatches(sel).length * 10000;
     s += '.'.allMatches(sel).length * 100;
     s += '['.allMatches(sel).length * 100;
-    if (RegExp(r'^[a-zA-Z]+').hasMatch(sel)) s += 1;
+    if (RegExp(r'^[a-zA-Z]+').hasMatch(sel)) {
+      s += 1;
+    }
     return s;
   }
 
   Map<String, String> getComputedStyle(dom.Element element) {
-    if (_styleCache.containsKey(element)) return Map.from(_styleCache[element]!);
+    if (_styleCache.containsKey(element)) {
+      return Map.from(_styleCache[element]!);
+    }
     final styles = <String, String>{};
-    if (_userAgentStyles.containsKey('*')) styles.addAll(_userAgentStyles['*']!);
+    if (_userAgentStyles.containsKey('*')) {
+      styles.addAll(_userAgentStyles['*']!);
+    }
     final tag = element.localName?.toLowerCase() ?? '';
-    if (_userAgentStyles.containsKey(tag)) styles.addAll(_userAgentStyles[tag]!);
+    if (_userAgentStyles.containsKey(tag)) {
+      styles.addAll(_userAgentStyles[tag]!);
+    }
     for (final r in _rules) {
-      if (_matches(element, r.selector)) styles.addAll(r.properties);
+      if (_matches(element, r.selector)) {
+        styles.addAll(r.properties);
+      }
     }
     final inline = element.attributes['style'];
-    if (inline != null && inline.isNotEmpty) styles.addAll(_parseProps(inline));
-    styles.forEach((k, v) => styles[k] = _resolveValue(v));
+    if (inline != null && inline.isNotEmpty) {
+      styles.addAll(_parseProps(inline));
+    }
+    styles.forEach((k, v) {
+      styles[k] = _resolveValue(v);
+    });
     _styleCache[element] = Map.from(styles);
     return styles;
   }
@@ -197,14 +227,28 @@ class _MobileCssParser {
   }
 
   bool _matches(dom.Element el, String sel) {
-    if (sel == '*' || sel == 'body') return true;
-    if (sel == el.localName) return true;
-    if (sel.startsWith('.')) return el.classes.contains(sel.substring(1));
-    if (sel.startsWith('#')) return el.attributes['id'] == sel.substring(1);
+    if (sel == '*' || sel == 'body') {
+      return true;
+    }
+    if (sel == el.localName) {
+      return true;
+    }
+    if (sel.startsWith('.')) {
+      return el.classes.contains(sel.substring(1));
+    }
+    if (sel.startsWith('#')) {
+      return el.attributes['id'] == sel.substring(1);
+    }
     return sel.split(RegExp(r'(?=[.#])')).every((p) {
-      if (p.isEmpty) return true;
-      if (p.startsWith('.')) return el.classes.contains(p.substring(1));
-      if (p.startsWith('#')) return el.attributes['id'] == p.substring(1);
+      if (p.isEmpty) {
+        return true;
+      }
+      if (p.startsWith('.')) {
+        return el.classes.contains(p.substring(1));
+      }
+      if (p.startsWith('#')) {
+        return el.attributes['id'] == p.substring(1);
+      }
       return p == el.localName;
     });
   }
@@ -227,11 +271,19 @@ class _MediaQuery {
 
   bool matches(double sw, double sh) {
     final mw = RegExp(r'max-width:\s*(\d+)px').firstMatch(condition);
-    if (mw != null) return sw <= double.parse(mw.group(1)!);
+    if (mw != null) {
+      return sw <= double.parse(mw.group(1)!);
+    }
     final miw = RegExp(r'min-width:\s*(\d+)px').firstMatch(condition);
-    if (miw != null) return sw >= double.parse(miw.group(1)!);
-    if (condition.contains('landscape')) return sw > sh;
-    if (condition.contains('portrait')) return sw <= sh;
+    if (miw != null) {
+      return sw >= double.parse(miw.group(1)!);
+    }
+    if (condition.contains('landscape')) {
+      return sw > sh;
+    }
+    if (condition.contains('portrait')) {
+      return sw <= sh;
+    }
     return false;
   }
 }
@@ -284,7 +336,9 @@ class _MyHomePageState extends State<MyHomePage> {
     final s = MediaQuery.of(context).size;
     _css.setViewport(width: s.width, height: s.height, pixelRatio: MediaQuery.of(context).devicePixelRatio);
     await _css.parseFromHtml(_html, client: _client, screenWidth: s.width);
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -299,7 +353,9 @@ class _MyHomePageState extends State<MyHomePage> {
     final s = MediaQuery.of(context).size;
     _css.setViewport(width: s.width, height: s.height);
     await _css.parseFromHtml(html, client: _client, screenWidth: s.width);
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   _FormData? _formOf(dom.Element el) {
@@ -319,16 +375,24 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   String _resolve(String url) {
-    if (url.startsWith('http')) return url;
-    if (_url.isEmpty) return 'https://$url';
+    if (url.startsWith('http')) {
+      return url;
+    }
+    if (_url.isEmpty) {
+      return 'https://$url';
+    }
     final u = Uri.parse(_url);
-    if (url.startsWith('/')) return '${u.scheme}://${u.host}$url';
+    if (url.startsWith('/')) {
+      return '${u.scheme}://${u.host}$url';
+    }
     final i = u.path.lastIndexOf('/');
     return '${u.scheme}://${u.host}${i > 0 ? u.path.substring(0, i) : ''}/$url';
   }
 
   Future<void> _go(String url) async {
-    if (url.isEmpty) return;
+    if (url.isEmpty) {
+      return;
+    }
     final full = _resolve(url);
     setState(() {
       _loading = true;
@@ -347,13 +411,17 @@ class _MyHomePageState extends State<MyHomePage> {
     } catch (e) {
       setState(() => _html = '<p style="color:red">$e</p>');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
   Future<void> _submit(_FormData fd) async {
     final full = fd.action.isNotEmpty ? _resolve(fd.action) : _url;
-    if (full.isEmpty) return;
+    if (full.isEmpty) {
+      return;
+    }
     setState(() => _loading = true);
     try {
       final data = Map.fromEntries(fd.values.entries.where((e) => e.key.isNotEmpty));
@@ -372,29 +440,49 @@ class _MyHomePageState extends State<MyHomePage> {
       });
       await _update(r.body, full);
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
   // ========== Widget builders ==========
   Widget? _buildCustom(dom.Element el) {
     final tag = el.localName;
-    if (tag == 'input') return _input(el);
-    if (tag == 'button') return _button(el);
-    if (tag == 'select') return _select(el);
-    if (tag == 'textarea') return _textarea(el);
+    if (tag == 'input') {
+      return _input(el);
+    }
+    if (tag == 'button') {
+      return _button(el);
+    }
+    if (tag == 'select') {
+      return _select(el);
+    }
+    if (tag == 'textarea') {
+      return _textarea(el);
+    }
     if (tag == 'option' || tag == 'style' || tag == 'meta' || tag == 'link' || tag == 'script' || tag == 'head') {
       return const SizedBox.shrink();
     }
 
     final st = _css.getComputedStyle(el);
     final d = st['display'];
-    if (d == 'flex' || d == 'inline-flex') return _flex(el, st);
-    if (d == 'grid' || d == 'inline-grid') return _grid(el, st);
-    if (tag == 'img') return _img(el, st);
-    if (tag == 'a') return _link(el, st);
+    if (d == 'flex' || d == 'inline-flex') {
+      return _flex(el, st);
+    }
+    if (d == 'grid' || d == 'inline-grid') {
+      return _grid(el, st);
+    }
+    if (tag == 'img') {
+      return _img(el, st);
+    }
+    if (tag == 'a') {
+      return _link(el, st);
+    }
     return _styled(el, st);
   }
 
@@ -459,7 +547,9 @@ class _MyHomePageState extends State<MyHomePage> {
     final href = el.attributes['href'] ?? '';
     return GestureDetector(
       onTap: () {
-        if (href.isNotEmpty) _go(_resolve(href));
+        if (href.isNotEmpty) {
+          _go(_resolve(href));
+        }
       },
       child: Container(
         margin: _insets(st['margin']),
@@ -514,8 +604,12 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Widget _select(dom.Element el) {
     final fd = _formOf(el);
-    // 修复 312, 313 行空安全报错
-    final items = el.getElementsByTagName('option').map((o) => MapEntry(o.text.trim(), o.attributes['value'] ?? o.text.trim())).toList();
+    // 严格修复 312, 313 行的空安全问题
+    final items = el.getElementsByTagName('option').map((o) {
+      final val = o.attributes?['value'];
+      final text = o.text?.trim() ?? '';
+      return MapEntry(text, val ?? text);
+    }).toList();
     return _SelW(items: items, name: el.attributes['name'] ?? '', formData: fd);
   }
 
@@ -531,32 +625,50 @@ class _MyHomePageState extends State<MyHomePage> {
 
   // ========== 辅助解析 ==========
   List<Widget> _gap(List<Widget> c, double? g, Axis d) {
-    if (g == null || c.isEmpty) return c;
+    if (g == null || c.isEmpty) {
+      return c;
+    }
     return List.generate(c.length * 2 - 1, (i) => i.isOdd ? SizedBox(width: d == Axis.horizontal ? g : 0, height: d == Axis.vertical ? g : 0) : c[i ~/ 2]);
   }
 
   double? _px(String? v) {
-    if (v == null) return null;
+    if (v == null) {
+      return null;
+    }
     final m = RegExp(r'([\d.]+)').firstMatch(v);
     return m != null ? double.tryParse(m.group(1)!) : null;
   }
 
   Color? _color(String? v) {
-    if (v == null) return null;
+    if (v == null) {
+      return null;
+    }
     if (v.startsWith('#')) {
       final h = v.substring(1);
-      if (h.length == 6) return Color(int.parse('FF$h', radix: 16));
-      if (h.length == 3) return Color(int.parse('FF${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}', radix: 16));
+      if (h.length == 6) {
+        return Color(int.parse('FF$h', radix: 16));
+      }
+      if (h.length == 3) {
+        return Color(int.parse('FF${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}', radix: 16));
+      }
     }
     return null;
   }
 
   EdgeInsets _insets(String? v) {
-    if (v == null || v == '0') return EdgeInsets.zero;
+    if (v == null || v == '0') {
+      return EdgeInsets.zero;
+    }
     final parts = v.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
-    if (parts.length == 1) return EdgeInsets.all(_px(parts[0]) ?? 0);
-    if (parts.length == 2) return EdgeInsets.symmetric(vertical: _px(parts[0]) ?? 0, horizontal: _px(parts[1]) ?? 0);
-    if (parts.length == 4) return EdgeInsets.fromLTRB(_px(parts[3]) ?? 0, _px(parts[0]) ?? 0, _px(parts[1]) ?? 0, _px(parts[2]) ?? 0);
+    if (parts.length == 1) {
+      return EdgeInsets.all(_px(parts[0]) ?? 0);
+    }
+    if (parts.length == 2) {
+      return EdgeInsets.symmetric(vertical: _px(parts[0]) ?? 0, horizontal: _px(parts[1]) ?? 0);
+    }
+    if (parts.length == 4) {
+      return EdgeInsets.fromLTRB(_px(parts[3]) ?? 0, _px(parts[0]) ?? 0, _px(parts[1]) ?? 0, _px(parts[2]) ?? 0);
+    }
     return EdgeInsets.all(_px(v) ?? 0);
   }
 
@@ -566,15 +678,18 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   List<BoxShadow>? _shadow(String? v) {
-    if (v == null || v == 'none') return null;
+    if (v == null || v == 'none') {
+      return null;
+    }
     final m = RegExp(r'([\d.]+)px\s+([\d.]+)px\s+([\d.]+)px\s+rgba?\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)').firstMatch(v);
-    if (m != null)
+    if (m != null) {
       return [
         BoxShadow(
             offset: Offset(double.parse(m.group(1)!), double.parse(m.group(2)!)),
             blurRadius: double.parse(m.group(3)!),
             color: Color.fromRGBO(int.parse(m.group(4)!), int.parse(m.group(5)!), int.parse(m.group(6)!), double.parse(m.group(7)!)))
       ];
+    }
     return null;
   }
 
@@ -705,7 +820,6 @@ class _InputWState extends State<_InputW> {
       }
     });
     widget.formData?.addListener(() {
-      // 修复 572 行代码规范提示
       if (widget.type == 'radio' && mounted) {
         setState(() => _checked = widget.formData!.values[widget.name] == widget.value);
       }
@@ -815,8 +929,12 @@ class _SelWState extends State<_SelW> {
   @override
   void initState() {
     super.initState();
-    if (widget.items.isNotEmpty) _val = widget.items.first.value;
-    if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _val ?? '';
+    if (widget.items.isNotEmpty) {
+      _val = widget.items.first.value;
+    }
+    if (widget.formData != null && widget.name.isNotEmpty) {
+      widget.formData!.values[widget.name] = _val ?? '';
+    }
   }
 
   @override
