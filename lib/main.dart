@@ -16,102 +16,59 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: '我的应用',
       theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
-      home: const MyHomePage(title: '我的应用 (全站CSS兼容)'),
+      home: const MyHomePage(title: '我的应用 (表单 + CSS布局兼容)'),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
 // ======================================================================
-// 升级版 CSS 解析器（支持 Tag、Class、ID 选择器）
+// 轻量级 CSS 解析器（正则提取类名和样式属性）
 // ======================================================================
 class _SimpleCssParser {
-  // 存储规则：{ "div": {...}, ".box": {...}, "#header": {...} }
   final Map<String, Map<String, String>> rules = {};
 
   void parse(String html) {
-    rules.clear(); // 切换网页时清空旧规则
     final styleRegex = RegExp(r'<style[^>]*>(.*?)</style>', dotAll: true);
     final matches = styleRegex.allMatches(html);
 
     for (final match in matches) {
       final cssText = match.group(1)?.trim() ?? '';
-      // 移除注释
       final cleanCss = cssText.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
       final blockRegex = RegExp(r'([^{]+)\{([^}]+)\}');
       final blocks = blockRegex.allMatches(cleanCss);
 
       for (final block in blocks) {
-        // 兼容多个选择器逗号分隔的情况，如 "h1, h2, .title { ... }"
-        final rawSelectors = block.group(1)?.trim() ?? '';
+        final selector = block.group(1)?.trim() ?? '';
         final propertiesStr = block.group(2)?.trim() ?? '';
-        
         final props = <String, String>{};
         final propRegex = RegExp(r'([\w-]+)\s*:\s*([^;]+);?');
         final propsMatches = propRegex.allMatches(propertiesStr);
+
         for (final prop in propsMatches) {
           final key = prop.group(1)?.trim().toLowerCase() ?? '';
           final value = prop.group(2)?.trim() ?? '';
           if (key.isNotEmpty) props[key] = value;
         }
 
-        if (props.isEmpty) continue;
-
-        // 拆分并标准化选择器
-        final selectors = rawSelectors.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty);
-        for (final selector in selectors) {
-          final normalizedSelector = _normalizeSelector(selector);
-          if (normalizedSelector != null) {
-            rules[normalizedSelector] = props;
-          }
+        if (selector.startsWith('.') && props.isNotEmpty) {
+          rules[selector] = props;
         }
       }
     }
   }
 
-  // 标准化选择器（目前支持纯标签、纯类、纯ID，过滤掉复杂嵌套）
-  String? _normalizeSelector(String selector) {
-    final trimmed = selector.trim();
-    // 过滤掉包含空格的嵌套选择器（如 .nav li），因为Flutter没有等效的DOM上下文快速匹配
-    if (trimmed.contains(' ') || trimmed.contains('>')) return null;
-    
-    if (trimmed.startsWith('#')) return trimmed.toLowerCase();
-    if (trimmed.startsWith('.')) return trimmed.toLowerCase();
-    // 纯标签选择器
-    if (RegExp(r'^[a-zA-Z][a-zA-Z0-9]*$').hasMatch(trimmed)) return trimmed.toLowerCase();
-    
-    return null;
-  }
-
-  // 核心匹配逻辑（ID > Class > Tag）
   Map<String, String>? getStylesForElement(dom.Element element) {
+    final classes = element.classes;
+    if (classes.isEmpty) return null;
     Map<String, String>? matchedStyles;
-
-    // 1. 优先匹配 ID (权重最高)
-    final id = element.id;
-    if (id.isNotEmpty) {
-      final idSelector = '#$id'.toLowerCase();
-      if (rules.containsKey(idSelector)) {
-        matchedStyles = Map.from(rules[idSelector]!);
-      }
-    }
-
-    // 2. 其次匹配 Class (可叠加多个)
-    for (final className in element.classes) {
-      final classSelector = '.$className'.toLowerCase();
-      if (rules.containsKey(classSelector)) {
+    for (final className in classes) {
+      final selector = '.$className';
+      if (rules.containsKey(selector)) {
         matchedStyles ??= {};
-        matchedStyles.addAll(rules[classSelector]!);
+        matchedStyles.addAll(rules[selector]!);
       }
     }
-
-    // 3. 最后匹配 Tag (基础样式)
-    final tagSelector = element.localName?.toLowerCase();
-    if (tagSelector != null && rules.containsKey(tagSelector)) {
-      matchedStyles ??= {};
-      matchedStyles.addAll(rules[tagSelector]!);
-    }
-
     return matchedStyles;
   }
 }
@@ -142,7 +99,24 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final TextEditingController _urlController = TextEditingController();
-  String _htmlContent = '<p style="text-align:center; color:grey; margin-top:50px;">在上方输入网址访问任意网页，将自动解析并兼容其 Flex/Grid 布局。</p>';
+  String _htmlContent = '''
+    <style>
+      .flex-row { display: flex; flex-direction: row; justify-content: space-between; gap: 10px; background-color: #f0f0f0; padding: 10px; margin-bottom: 15px; border-radius: 5px; }
+      .flex-col { display: flex; flex-direction: column; gap: 8px; background-color: #e0f7fa; padding: 10px; margin-bottom: 15px; border-radius: 5px; }
+      .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; background-color: #fff3e0; padding: 10px; margin-bottom: 15px; border-radius: 5px; }
+      .box { background-color: #2196f3; color: white; padding: 10px; border-radius: 4px; text-align: center; }
+    </style>
+    <h2>演示: CSS Style 兼容与表单</h2>
+    <div class="flex-row"><div class="box">Flex 1</div><div class="box">Flex 2</div><div class="box">Flex 3</div></div>
+    <div class="grid-3"><div class="box">G1</div><div class="box">G2</div><div class="box">G3</div></div>
+    <form method="get" action="/search">
+      <div class="flex-row">
+        <input type="text" name="q" placeholder="输入关键词..." style="flex: 1;">
+        <input type="submit" value="搜索">
+      </div>
+    </form>
+  ''';
+  
   bool _isLoading = false;
   String _currentUrl = '';
   final Map<int, _FormData> _formRegistry = {};
@@ -216,7 +190,7 @@ class _MyHomePageState extends State<MyHomePage> {
       if (response.statusCode == 200) {
         setState(() {
           _htmlContent = _fixEncoding(response);
-          _updateCssParser(); 
+          _updateCssParser(); // 网页加载后重新解析 CSS
         });
       } else {
         setState(() => _htmlContent = '<p style="color:red">请求失败: ${response.statusCode}</p>');
@@ -251,7 +225,7 @@ class _MyHomePageState extends State<MyHomePage> {
         _currentUrl = fullUrl; _urlController.text = fullUrl;
         if (response.statusCode == 200) {
           _htmlContent = _fixEncoding(response);
-          _updateCssParser(); 
+          _updateCssParser(); // 表单跳转后重新解析新页面的 CSS
         } else {
           _htmlContent = '<p style="color:red">提交返回状态码: ${response.statusCode}</p>';
         }
@@ -264,12 +238,12 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   // ==================================================================
-  // 核心：融合拦截器
+  // 核心：融合了 CSS 布局拦截 与 表单控件拦截
   // ==================================================================
   Widget? _buildCustomWidget(dom.Element element) {
     final tag = element.localName;
     
-    // 1. 表单控件拦截（优先级最高）
+    // 1. 表单控件优先级最高（必须拦截，否则会变成纯文本）
     if (tag == 'input') return _buildHtmlInput(element);
     if (tag == 'button') return _buildHtmlButton(element);
     if (tag == 'select') return _buildHtmlSelect(element);
@@ -277,30 +251,31 @@ class _MyHomePageState extends State<MyHomePage> {
     if (tag == 'option') return const SizedBox.shrink();
     if (tag == 'style') return const SizedBox.shrink(); // 隐藏原本的style标签文本
 
-    // 2. CSS 布局拦截（全网生效）
-    final styles = cssParser.getStylesForElement(element);
+    // 2. CSS Flex / Grid 布局拦截
+    // 修复1：去掉 final，允许后续合并内联样式
+    Map<String, String>? styles = cssParser.getStylesForElement(element);
     
     // 增加内联样式解析的回退
     final inlineStyle = element.attributes['style'];
     if (inlineStyle != null) {
-      styles ??= {};
+      styles ??= {}; // 如果外部CSS没匹配到，初始化一个Map
       final propRegex = RegExp(r'([\w-]+)\s*:\s*([^;]+);?');
       propRegex.allMatches(inlineStyle).forEach((prop) {
         final key = prop.group(1)?.trim().toLowerCase() ?? '';
         final value = prop.group(2)?.trim() ?? '';
-        if (key.isNotEmpty) styles[key] = value; // 内联样式覆盖外部样式
+        if (key.isNotEmpty) styles![key] = value; // 内联样式覆盖外部样式
       });
     }
 
-    final display = styles?['display'];
-    if (display == 'flex') return _buildFlexLayout(element, styles!);
-    if (display == 'grid') return _buildGridLayout(element, styles!);
+    // 修复2：使用 ?. 安全调用，并在不为空时才判断
+    if (styles?['display'] == 'flex') return _buildFlexLayout(element, styles!);
+    if (styles?['display'] == 'grid') return _buildGridLayout(element, styles!);
 
-    return null;
+    return null; // 交给 flutter_widget_from_html 默认处理
   }
 
   // --------------------------------------------------
-  // CSS 翻译器
+  // CSS 到 Flutter 布局翻译器
   // --------------------------------------------------
   Widget _buildFlexLayout(dom.Element element, Map<String, String> styles) {
     final direction = styles['flex-direction'] == 'column' ? Axis.vertical : Axis.horizontal;
@@ -373,7 +348,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   // --------------------------------------------------
-  // 表单控件生成器
+  // 表单控件生成器 (与你原有代码完全一致)
   // --------------------------------------------------
   Widget? _buildHtmlInput(dom.Element element) {
     final type = element.attributes['type']?.toLowerCase() ?? 'text';
@@ -414,7 +389,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   // --------------------------------------------------
-  // CSS 属性解析辅助
+  // CSS 属性解析辅助方法
   // --------------------------------------------------
   double? _parsePx(String? value) {
     if (value == null) return null;
@@ -460,7 +435,7 @@ class _MyHomePageState extends State<MyHomePage> {
             padding: const EdgeInsets.all(8.0),
             child: Row(
               children: [
-                Expanded(child: TextField(controller: _urlController, onSubmitted: _fetchWebContent, decoration: InputDecoration(hintText: '输入网址 (如 https://example.com)', border: const OutlineInputBorder(), filled: true, fillColor: Colors.grey[200]))),
+                Expanded(child: TextField(controller: _urlController, onSubmitted: _fetchWebContent, decoration: InputDecoration(hintText: '输入网址', border: const OutlineInputBorder(), filled: true, fillColor: Colors.grey[200]))),
                 const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: _isLoading ? null : () => _fetchWebContent(_urlController.text),
@@ -478,7 +453,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 child: HtmlWidget(
                   _htmlContent,
                   onTapUrl: (url) { _fetchWebContent(url); return true; },
-                  customWidgetBuilder: _buildCustomWidget, 
+                  customWidgetBuilder: _buildCustomWidget, // 统一入口
                   textStyle: const TextStyle(fontSize: 16),
                   customStylesBuilder: (element) => {'margin': '0', 'padding': '0'},
                 ),
@@ -500,28 +475,60 @@ class _MyHomePageState extends State<MyHomePage> {
 }
 
 // ======================================================================
-// 底部表单组件区
+// 底部表单组件区（完全保留你原来的逻辑，解决 const 警告）
 // ======================================================================
 class _InputWrapper extends StatefulWidget {
-  final String type; final String placeholder; final String value; final String name; final _FormData? formData; final VoidCallback? onSubmit;
+  final String type;
+  final String placeholder;
+  final String value;
+  final String name;
+  final _FormData? formData;
+  final VoidCallback? onSubmit;
   const _InputWrapper({required this.type, required this.placeholder, required this.value, required this.name, this.formData, this.onSubmit});
-  @override State<_InputWrapper> createState() => _InputWrapperState();
+  @override
+  State<_InputWrapper> createState() => _InputWrapperState();
 }
+
 class _InputWrapperState extends State<_InputWrapper> {
-  late TextEditingController _controller; bool _isChecked = false;
-  @override void initState() { super.initState(); _controller = TextEditingController(text: widget.value); if (widget.formData != null && widget.name.isNotEmpty) { if (widget.type == 'checkbox') { _isChecked = widget.value.isNotEmpty || widget.value == 'true'; widget.formData!.setValue(widget.name, _isChecked ? widget.value : ''); } else if (widget.type == 'radio') { _isChecked = widget.formData!.values[widget.name] == widget.value; } else { widget.formData!.values[widget.name] = widget.value; } } _controller.addListener(_onTextChanged); widget.formData?.addListener(_onFormChanged); }
-  void _onTextChanged() { if (widget.formData != null && widget.name.isNotEmpty && !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) widget.formData!.values[widget.name] = _controller.text; }
+  late TextEditingController _controller;
+  bool _isChecked = false;
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.value);
+    if (widget.formData != null && widget.name.isNotEmpty) {
+      if (widget.type == 'checkbox') { _isChecked = widget.value.isNotEmpty || widget.value == 'true'; widget.formData!.setValue(widget.name, _isChecked ? widget.value : ''); }
+      else if (widget.type == 'radio') { _isChecked = widget.formData!.values[widget.name] == widget.value; }
+      else { widget.formData!.values[widget.name] = widget.value; }
+    }
+    _controller.addListener(_onTextChanged);
+    widget.formData?.addListener(_onFormChanged);
+  }
+  void _onTextChanged() {
+    if (widget.formData != null && widget.name.isNotEmpty && !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) {
+      widget.formData!.values[widget.name] = _controller.text;
+    }
+  }
   void _onFormChanged() { if (widget.type == 'radio' && widget.formData != null && mounted) setState(() => _isChecked = widget.formData!.values[widget.name] == widget.value); }
-  @override void dispose() { _controller.removeListener(_onTextChanged); _controller.dispose(); widget.formData?.removeListener(_onFormChanged); super.dispose(); }
-  @override Widget build(BuildContext context) {
+  @override
+  void dispose() { _controller.removeListener(_onTextChanged); _controller.dispose(); widget.formData?.removeListener(_onFormChanged); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
     switch (widget.type) {
-      case 'text': case 'search': case 'email': case 'password': case 'url': case 'tel': case 'number': case 'date': return TextField(controller: _controller, obscureText: widget.type == 'password', decoration: InputDecoration(hintText: widget.placeholder, contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12), border: OutlineInputBorder(borderRadius: BorderRadius.circular(4))));
+      case 'text': case 'search': case 'email': case 'password': case 'url': case 'tel': case 'number': case 'date':
+        return TextField(controller: _controller, obscureText: widget.type == 'password', decoration: InputDecoration(hintText: widget.placeholder, contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12), border: OutlineInputBorder(borderRadius: BorderRadius.circular(4))));
       case 'hidden': return const SizedBox.shrink();
-      case 'checkbox': return Row(mainAxisSize: MainAxisSize.min, children: [ Checkbox(value: _isChecked, onChanged: (val) { setState(() => _isChecked = val ?? false); if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.setValue(widget.name, _isChecked ? widget.value : ''); }), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name), ]);
-      case 'radio': return GestureDetector(onTap: () { if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.setValue(widget.name, widget.value); }, child: Padding(padding: const EdgeInsets.only(bottom: 4.0), child: Row(mainAxisSize: MainAxisSize.min, children: [ Container(width: 20, height: 20, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _isChecked ? Colors.blue : Colors.grey, width: 2)), child: _isChecked ? Center(child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.blue))) : null), const SizedBox(width: 8), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value), ])));
-      case 'submit': return ElevatedButton(onPressed: widget.onSubmit, style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white), child: Text(widget.value.isNotEmpty ? widget.value : 'Submit'));
-      case 'reset': return ElevatedButton(onPressed: () { widget.formData?.values.clear(); _controller.clear(); setState(() => _isChecked = false); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white), child: Text(widget.value.isNotEmpty ? widget.value : 'Reset'));
-      case 'button': default: return ElevatedButton(onPressed: () {}, style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, side: const BorderSide(color: Colors.grey)), child: Text(widget.value.isNotEmpty ? widget.value : (widget.type.toUpperCase())));
+      case 'checkbox':
+        return Row(mainAxisSize: MainAxisSize.min, children: [ Checkbox(value: _isChecked, onChanged: (val) { setState(() => _isChecked = val ?? false); if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.setValue(widget.name, _isChecked ? widget.value : ''); }), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name), ]);
+      case 'radio':
+        return GestureDetector(onTap: () { if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.setValue(widget.name, widget.value); }, child: Padding(padding: const EdgeInsets.only(bottom: 4.0), child: Row(mainAxisSize: MainAxisSize.min, children: [ Container(width: 20, height: 20, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _isChecked ? Colors.blue : Colors.grey, width: 2)), child: _isChecked ? Center(child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.blue))) : null), const SizedBox(width: 8), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value), ])));
+      case 'submit':
+        return ElevatedButton(onPressed: widget.onSubmit, style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white), child: Text(widget.value.isNotEmpty ? widget.value : 'Submit'));
+      case 'reset':
+        return ElevatedButton(onPressed: () { widget.formData?.values.clear(); _controller.clear(); setState(() => _isChecked = false); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white), child: Text(widget.value.isNotEmpty ? widget.value : 'Reset'));
+      case 'button': default:
+        return ElevatedButton(onPressed: () {}, style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, side: const BorderSide(color: Colors.grey)), child: Text(widget.value.isNotEmpty ? widget.value : (widget.type.toUpperCase())));
     }
   }
 }
@@ -529,7 +536,8 @@ class _InputWrapperState extends State<_InputWrapper> {
 class _FormButtonWrapper extends StatelessWidget {
   final String type; final String text; final _FormData? formData; final VoidCallback? onSubmit;
   const _FormButtonWrapper({required this.type, required this.text, this.formData, this.onSubmit});
-  @override Widget build(BuildContext context) {
+  @override
+  Widget build(BuildContext context) {
     if (type == 'submit') return ElevatedButton(onPressed: onSubmit, style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white), child: Text(text.isEmpty ? 'Submit' : text));
     if (type == 'reset') return ElevatedButton(onPressed: () => formData?.values.clear(), style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white), child: Text(text.isEmpty ? 'Reset' : text));
     return ElevatedButton(onPressed: () {}, style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, side: const BorderSide(color: Colors.grey)), child: Text(text.isEmpty ? 'Button' : text));
@@ -545,7 +553,12 @@ class _SelectWrapperState extends State<_SelectWrapper> {
   String? _selectedValue;
   @override void initState() { super.initState(); if (widget.items.isNotEmpty) _selectedValue = widget.items.first.value; if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _selectedValue ?? ''; }
   @override Widget build(BuildContext context) {
-    return DropdownButtonFormField<String>( initialValue: widget.items.any((e) => e.value == _selectedValue) ? _selectedValue : null, decoration: InputDecoration(border: const OutlineInputBorder(), contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8)), items: widget.items.map((item) => DropdownMenuItem<String>(value: item.value, child: Text(item.key))).toList(), onChanged: (val) { setState(() => _selectedValue = val); if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = val ?? ''; }, );
+    return DropdownButtonFormField<String>(
+      initialValue: widget.items.any((e) => e.value == _selectedValue) ? _selectedValue : null,
+      decoration: InputDecoration(border: const OutlineInputBorder(), contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
+      items: widget.items.map((item) => DropdownMenuItem<String>(value: item.value, child: Text(item.key))).toList(),
+      onChanged: (val) { setState(() => _selectedValue = val); if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = val ?? ''; },
+    );
   }
 }
 
