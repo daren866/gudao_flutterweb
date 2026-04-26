@@ -362,12 +362,12 @@ class _MyHomePageState extends State<MyHomePage> {
     dom.Node? n = el.parent;
     while (n != null) {
       if (n is dom.Element && n.localName == 'form') {
-        return _forms.putIfAbsent(
-            n.hashCode,
-            () => _FormData(
-                  method: n.attributes['method']?.toLowerCase() ?? 'get',
-                  action: n.attributes['action'] ?? '',
-                ));
+        // 提取局部变量，强制保证循环内的类型推导
+        final form = n;
+        return _forms.putIfAbsent(form.hashCode, () => _FormData(
+              method: form.attributes['method']?.toLowerCase() ?? 'get',
+              action: form.attributes['action'] ?? '',
+            ));
       }
       n = n.parent;
     }
@@ -604,10 +604,10 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Widget _select(dom.Element el) {
     final fd = _formOf(el);
-    // 严格修复 312, 313 行的空安全问题
+    // 修复 609, 610 行无效空安全操作符警告：Element 本身非空
     final items = el.getElementsByTagName('option').map((o) {
-      final val = o.attributes?['value'];
-      final text = o.text?.trim() ?? '';
+      final val = o.attributes['value'];
+      final text = o.text.trim();
       return MapEntry(text, val ?? text);
     }).toList();
     return _SelW(items: items, name: el.attributes['name'] ?? '', formData: fd);
