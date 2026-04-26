@@ -705,6 +705,7 @@ class _InputWState extends State<_InputW> {
       }
     });
     widget.formData?.addListener(() {
+      // 修复 572 行代码规范提示
       if (widget.type == 'radio' && mounted) {
         setState(() => _checked = widget.formData!.values[widget.name] == widget.value);
       }
@@ -820,7 +821,6 @@ class _SelWState extends State<_SelW> {
 
   @override
   Widget build(BuildContext context) {
-    // 修复 820 行 API 废弃警告：value -> initialValue
     return DropdownButtonFormField<String>(
       initialValue: _val,
       items: widget.items
