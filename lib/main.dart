@@ -35,7 +35,6 @@ class _MobileCssParser {
   String _baseUrl = '';
   double _viewportWidth = 375;
   double _viewportHeight = 812;
-  double _devicePixelRatio = 2.0;
 
   static final Map<String, Map<String, String>> _userAgentStyles = {
     '*': {'margin': '0', 'padding': '0', 'box-sizing': 'border-box'},
@@ -65,7 +64,6 @@ class _MobileCssParser {
   void setViewport({required double width, required double height, double pixelRatio = 2.0}) {
     _viewportWidth = width;
     _viewportHeight = height;
-    _devicePixelRatio = pixelRatio;
   }
 
   void parseViewportMeta(String html) {
@@ -181,7 +179,9 @@ class _MobileCssParser {
     if (_userAgentStyles.containsKey('*')) styles.addAll(_userAgentStyles['*']!);
     final tag = element.localName?.toLowerCase() ?? '';
     if (_userAgentStyles.containsKey(tag)) styles.addAll(_userAgentStyles[tag]!);
-    for (final r in _rules) { if (_matches(element, r.selector)) styles.addAll(r.properties); }
+    for (final r in _rules) {
+      if (_matches(element, r.selector)) styles.addAll(r.properties);
+    }
     final inline = element.attributes['style'];
     if (inline != null && inline.isNotEmpty) styles.addAll(_parseProps(inline));
     styles.forEach((k, v) => styles[k] = _resolveValue(v));
@@ -215,13 +215,16 @@ class _CssRule {
   final Map<String, String> properties;
   final int specificity;
   final CssSource source;
+
   _CssRule({required this.selector, required this.properties, required this.specificity, required this.source});
 }
 
 class _MediaQuery {
   final String condition;
   final List<_CssRule> rules = [];
+
   _MediaQuery({required this.condition});
+
   bool matches(double sw, double sh) {
     final mw = RegExp(r'max-width:\s*(\d+)px').firstMatch(condition);
     if (mw != null) return sw <= double.parse(mw.group(1)!);
@@ -238,8 +241,13 @@ enum CssSource { userAgent, external, styleTag, inline }
 class _FormData extends ChangeNotifier {
   final String method, action;
   final Map<String, String> values = {};
+
   _FormData({required this.method, required this.action});
-  void setValue(String k, String v) { values[k] = v; notifyListeners(); }
+
+  void setValue(String k, String v) {
+    values[k] = v;
+    notifyListeners();
+  }
 }
 
 // ======================================================================
@@ -247,13 +255,17 @@ class _FormData extends ChangeNotifier {
 // ======================================================================
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
+
   final String title;
-  @override State<MyHomePage> createState() => _MyHomePageState();
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
 }
 
 class _MyHomePageState extends State<MyHomePage> {
   final _urlCtrl = TextEditingController();
-  String _html = '<meta name="viewport" content="width=device-width"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;line-height:1.5}.container{display:flex;flex-direction:column;gap:16px;padding:16px;max-width:480px;margin:0 auto}.flex-row{display:flex;flex-wrap:wrap;gap:10px}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{background:white;border-radius:8px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,0.1)}.btn{padding:12px 20px;min-height:44px;font-size:16px;border-radius:8px;background:#007aff;color:white;border:none}img{max-width:100%;height:auto}a{text-decoration:none;color:#007aff}</style><div class="container"><h1>移动端演示</h1><div class="flex-row"><div class="card">Flex 1</div><div class="card">Flex 2</div></div><div class="grid-2"><div class="card">Grid 1</div><div class="card">Grid 2</div></div><form method="get" action="/search"><div class="flex-row"><input type="text" name="q" placeholder="搜索..." style="flex:1"><button type="submit" class="btn">搜索</button></div></form></div>';
+  String _html =
+      '<meta name="viewport" content="width=device-width"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;line-height:1.5}.container{display:flex;flex-direction:column;gap:16px;padding:16px;max-width:480px;margin:0 auto}.flex-row{display:flex;flex-wrap:wrap;gap:10px}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{background:white;border-radius:8px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,0.1)}.btn{padding:12px 20px;min-height:44px;font-size:16px;border-radius:8px;background:#007aff;color:white;border:none}img{max-width:100%;height:auto}a{text-decoration:none;color:#007aff}</style><div class="container"><h1>移动端演示</h1><div class="flex-row"><div class="card">Flex 1</div><div class="card">Flex 2</div></div><div class="grid-2"><div class="card">Grid 1</div><div class="card">Grid 2</div></div><form method="get" action="/search"><div class="flex-row"><input type="text" name="q" placeholder="搜索..." style="flex:1"><button type="submit" class="btn">搜索</button></div></form></div>';
   bool _loading = false;
   String _url = '';
   final Map<int, _FormData> _forms = {};
@@ -294,10 +306,12 @@ class _MyHomePageState extends State<MyHomePage> {
     dom.Node? n = el.parent;
     while (n != null) {
       if (n is dom.Element && n.localName == 'form') {
-        return _forms.putIfAbsent(n.hashCode, () => _FormData(
-          method: n.attributes['method']?.toLowerCase() ?? 'get',
-          action: n.attributes['action'] ?? '',
-        ));
+        return _forms.putIfAbsent(
+            n.hashCode,
+            () => _FormData(
+                  method: n.attributes['method']?.toLowerCase() ?? 'get',
+                  action: n.attributes['action'] ?? '',
+                ));
       }
       n = n.parent;
     }
@@ -316,7 +330,12 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _go(String url) async {
     if (url.isEmpty) return;
     final full = _resolve(url);
-    setState(() { _loading = true; _url = full; _urlCtrl.text = full; _forms.clear(); });
+    setState(() {
+      _loading = true;
+      _url = full;
+      _urlCtrl.text = full;
+      _forms.clear();
+    });
     try {
       final r = await http.get(Uri.parse(full), headers: {'User-Agent': 'Mozilla/5.0 (iPhone)'}).timeout(const Duration(seconds: 10));
       if (r.statusCode == 200) {
@@ -340,12 +359,17 @@ class _MyHomePageState extends State<MyHomePage> {
       final data = Map.fromEntries(fd.values.entries.where((e) => e.key.isNotEmpty));
       http.Response r;
       if (fd.method == 'post') {
-        r = await http.post(Uri.parse(full), headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: data).timeout(const Duration(seconds: 10));
+        r = await http.post(Uri.parse(full),
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: data).timeout(const Duration(seconds: 10));
       } else {
         final qs = data.entries.map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}').join('&');
         r = await http.get(Uri.parse(qs.isNotEmpty ? '$full?$qs' : full)).timeout(const Duration(seconds: 10));
       }
-      setState(() { _url = full; _urlCtrl.text = full; _html = r.body; });
+      setState(() {
+        _url = full;
+        _urlCtrl.text = full;
+        _html = r.body;
+      });
       await _update(r.body, full);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
@@ -361,7 +385,8 @@ class _MyHomePageState extends State<MyHomePage> {
     if (tag == 'button') return _button(el);
     if (tag == 'select') return _select(el);
     if (tag == 'textarea') return _textarea(el);
-    if (tag == 'option' || tag == 'style' || tag == 'meta' || tag == 'link' || tag == 'script' || tag == 'head') return const SizedBox.shrink();
+    if (tag == 'option' || tag == 'style' || tag == 'meta' || tag == 'link' || tag == 'script' || tag == 'head')
+      return const SizedBox.shrink();
 
     final st = _css.getComputedStyle(el);
     final d = st['display'];
@@ -377,11 +402,22 @@ class _MyHomePageState extends State<MyHomePage> {
     final wrap = st['flex-wrap'] == 'wrap';
     final gap = _px(st['gap']);
     return Container(
-      margin: _insets(st['margin']), padding: _insets(st['padding']),
-      decoration: BoxDecoration(color: _color(st['background-color']), borderRadius: _radius(st['border-radius']), boxShadow: _shadow(st['box-shadow'])),
+      margin: _insets(st['margin']),
+      padding: _insets(st['padding']),
+      decoration: BoxDecoration(
+          color: _color(st['background-color']),
+          borderRadius: _radius(st['border-radius']),
+          boxShadow: _shadow(st['box-shadow'])),
       child: wrap
-          ? Wrap(spacing: gap ?? 8, runSpacing: gap ?? 8, children: el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList())
-          : Flex(direction: dir, mainAxisAlignment: _main(st['justify-content']), crossAxisAlignment: _cross(st['align-items']), children: _gap(el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList(), gap, dir)),
+          ? Wrap(
+              spacing: gap ?? 8,
+              runSpacing: gap ?? 8,
+              children: el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList())
+          : Flex(
+              direction: dir,
+              mainAxisAlignment: _main(st['justify-content']),
+              crossAxisAlignment: _cross(st['align-items']),
+              children: _gap(el.children.map((c) => HtmlWidget(c.outerHtml, customWidgetBuilder: _buildCustom)).toList(), gap, dir)),
     );
   }
 
@@ -390,11 +426,16 @@ class _MyHomePageState extends State<MyHomePage> {
     final gap = _px(st['gap']);
     final p = _insets(st['padding']);
     return Container(
-      margin: _insets(st['margin']), padding: p,
+      margin: _insets(st['margin']),
+      padding: p,
       decoration: BoxDecoration(color: _color(st['background-color']), borderRadius: _radius(st['border-radius'])),
       child: LayoutBuilder(builder: (_, c) {
         final w = (c.maxWidth - p.horizontal - (cols - 1) * (gap ?? 8)) / cols;
-        return Wrap(spacing: gap ?? 8, runSpacing: gap ?? 8, children: el.children.map((ch) => SizedBox(width: w, child: HtmlWidget(ch.outerHtml, customWidgetBuilder: _buildCustom))).toList());
+        return Wrap(
+          spacing: gap ?? 8,
+          runSpacing: gap ?? 8,
+          children: el.children.map((ch) => SizedBox(width: w, child: HtmlWidget(ch.outerHtml, customWidgetBuilder: _buildCustom))).toList(),
+        );
       }),
     );
   }
@@ -404,7 +445,9 @@ class _MyHomePageState extends State<MyHomePage> {
     return Container(
       margin: _insets(st['margin']),
       child: src.isNotEmpty
-          ? ClipRRect(borderRadius: _radius(st['border-radius']) ?? BorderRadius.zero, child: Image.network(src, fit: BoxFit.contain, errorBuilder: (_, __, ___) => _placeholder()))
+          ? ClipRRect(
+              borderRadius: _radius(st['border-radius']) ?? BorderRadius.zero,
+              child: Image.network(src, fit: BoxFit.contain, errorBuilder: (_, __, ___) => _placeholder()))
           : _placeholder(),
     );
   }
@@ -414,11 +457,18 @@ class _MyHomePageState extends State<MyHomePage> {
   Widget _link(dom.Element el, Map<String, String> st) {
     final href = el.attributes['href'] ?? '';
     return GestureDetector(
-      onTap: () { if (href.isNotEmpty) _go(_resolve(href)); },
+      onTap: () {
+        if (href.isNotEmpty) _go(_resolve(href));
+      },
       child: Container(
-        margin: _insets(st['margin']), padding: _insets(st['padding']),
+        margin: _insets(st['margin']),
+        padding: _insets(st['padding']),
         constraints: BoxConstraints(minHeight: _px(st['min-height']) ?? 44),
-        child: HtmlWidget(el.outerHtml, customWidgetBuilder: _buildCustom, textStyle: TextStyle(color: _color(st['color']) ?? const Color(0xFF007AFF))),
+        child: HtmlWidget(
+          el.outerHtml,
+          customWidgetBuilder: _buildCustom,
+          textStyle: TextStyle(color: _color(st['color']) ?? const Color(0xFF007AFF)),
+        ),
       ),
     );
   }
@@ -429,7 +479,11 @@ class _MyHomePageState extends State<MyHomePage> {
     final m = _insets(st['margin']);
     final r = _radius(st['border-radius']);
     if (bg != null || p != EdgeInsets.zero || m != EdgeInsets.zero || r != null) {
-      return Container(margin: m, padding: p, decoration: BoxDecoration(color: bg, borderRadius: r), child: HtmlWidget(el.outerHtml, customWidgetBuilder: _buildCustom));
+      return Container(
+          margin: m,
+          padding: p,
+          decoration: BoxDecoration(color: bg, borderRadius: r),
+          child: HtmlWidget(el.outerHtml, customWidgetBuilder: _buildCustom));
     }
     return null;
   }
@@ -437,12 +491,24 @@ class _MyHomePageState extends State<MyHomePage> {
   // ========== 表单 ==========
   Widget _input(dom.Element el) {
     final fd = _formOf(el);
-    return _InputW(type: el.attributes['type'] ?? 'text', placeholder: el.attributes['placeholder'] ?? '', value: el.attributes['value'] ?? '', name: el.attributes['name'] ?? '', formData: fd, onSubmit: fd != null ? () => _submit(fd) : null);
+    return _InputW(
+      type: el.attributes['type'] ?? 'text',
+      placeholder: el.attributes['placeholder'] ?? '',
+      value: el.attributes['value'] ?? '',
+      name: el.attributes['name'] ?? '',
+      formData: fd,
+      onSubmit: fd != null ? () => _submit(fd) : null,
+    );
   }
 
   Widget _button(dom.Element el) {
     final fd = _formOf(el);
-    return _BtnW(type: el.attributes['type'] ?? 'button', text: el.innerHtml, formData: fd, onSubmit: fd != null ? () => _submit(fd) : null);
+    return _BtnW(
+      type: el.attributes['type'] ?? 'button',
+      text: el.innerHtml,
+      formData: fd,
+      onSubmit: fd != null ? () => _submit(fd) : null,
+    );
   }
 
   Widget _select(dom.Element el) {
@@ -453,7 +519,12 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Widget _textarea(dom.Element el) {
     final fd = _formOf(el);
-    return _TxtW(name: el.attributes['name'] ?? '', placeholder: el.attributes['placeholder'] ?? '', value: el.text.trim(), formData: fd);
+    return _TxtW(
+      name: el.attributes['name'] ?? '',
+      placeholder: el.attributes['placeholder'] ?? '',
+      value: el.text.trim(),
+      formData: fd,
+    );
   }
 
   // ========== 辅助解析 ==========
@@ -495,27 +566,43 @@ class _MyHomePageState extends State<MyHomePage> {
   List<BoxShadow>? _shadow(String? v) {
     if (v == null || v == 'none') return null;
     final m = RegExp(r'([\d.]+)px\s+([\d.]+)px\s+([\d.]+)px\s+rgba?\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)').firstMatch(v);
-    if (m != null) return [BoxShadow(offset: Offset(double.parse(m.group(1)!), double.parse(m.group(2)!)), blurRadius: double.parse(m.group(3)!), color: Color.fromRGBO(int.parse(m.group(4)!), int.parse(m.group(5)!), int.parse(m.group(6)!), double.parse(m.group(7)!)))];
+    if (m != null)
+      return [
+        BoxShadow(
+            offset: Offset(double.parse(m.group(1)!), double.parse(m.group(2)!)),
+            blurRadius: double.parse(m.group(3)!),
+            color: Color.fromRGBO(int.parse(m.group(4)!), int.parse(m.group(5)!), int.parse(m.group(6)!), double.parse(m.group(7)!)))
+      ];
     return null;
   }
 
   MainAxisAlignment _main(String? v) {
     switch (v) {
-      case 'center': return MainAxisAlignment.center;
-      case 'flex-end': return MainAxisAlignment.end;
-      case 'space-between': return MainAxisAlignment.spaceBetween;
-      case 'space-around': return MainAxisAlignment.spaceAround;
-      case 'space-evenly': return MainAxisAlignment.spaceEvenly;
-      default: return MainAxisAlignment.start;
+      case 'center':
+        return MainAxisAlignment.center;
+      case 'flex-end':
+        return MainAxisAlignment.end;
+      case 'space-between':
+        return MainAxisAlignment.spaceBetween;
+      case 'space-around':
+        return MainAxisAlignment.spaceAround;
+      case 'space-evenly':
+        return MainAxisAlignment.spaceEvenly;
+      default:
+        return MainAxisAlignment.start;
     }
   }
 
   CrossAxisAlignment _cross(String? v) {
     switch (v) {
-      case 'center': return CrossAxisAlignment.center;
-      case 'flex-end': return CrossAxisAlignment.end;
-      case 'stretch': return CrossAxisAlignment.stretch;
-      default: return CrossAxisAlignment.center;
+      case 'center':
+        return CrossAxisAlignment.center;
+      case 'flex-end':
+        return CrossAxisAlignment.end;
+      case 'stretch':
+        return CrossAxisAlignment.stretch;
+      default:
+        return CrossAxisAlignment.center;
     }
   }
 
@@ -523,16 +610,57 @@ class _MyHomePageState extends State<MyHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(widget.title), backgroundColor: Theme.of(context).colorScheme.inversePrimary),
-      body: Column(children: [
-        Container(padding: const EdgeInsets.all(8), child: Row(children: [
-          Expanded(child: TextField(controller: _urlCtrl, onSubmitted: _go, decoration: InputDecoration(hintText: '输入网址...', contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), border: OutlineInputBorder(borderRadius: BorderRadius.circular(20)), filled: true, fillColor: Colors.grey[100]))),
-          const SizedBox(width: 8),
-          ElevatedButton(onPressed: _loading ? null : () => _go(_urlCtrl.text), child: _loading ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('前往')),
-        ])),
-        if (_loading) const LinearProgressIndicator(minHeight: 2),
-        Expanded(child: SingleChildScrollView(padding: const EdgeInsets.all(12), child: HtmlWidget(_html, onTapUrl: (url) { _go(url); return true; }, customWidgetBuilder: _buildCustom, textStyle: const TextStyle(fontSize: 14, height: 1.5)))),
-        Container(width: double.infinity, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), color: Colors.grey[100], child: Text(_url.isNotEmpty ? _url : '就绪', style: TextStyle(fontSize: 11, color: Colors.grey[600]), overflow: TextOverflow.ellipsis)),
-      ]),
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _urlCtrl,
+                    onSubmitted: _go,
+                    decoration: InputDecoration(
+                        hintText: '输入网址...',
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(20)),
+                        filled: true,
+                        fillColor: Colors.grey[100]),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _loading ? null : () => _go(_urlCtrl.text),
+                  child: _loading
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('前往'),
+                ),
+              ],
+            ),
+          ),
+          if (_loading) const LinearProgressIndicator(minHeight: 2),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(12),
+              child: HtmlWidget(
+                _html,
+                onTapUrl: (url) {
+                  _go(url);
+                  return true;
+                },
+                customWidgetBuilder: _buildCustom,
+                textStyle: const TextStyle(fontSize: 14, height: 1.5),
+              ),
+            ),
+          ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            color: Colors.grey[100],
+            child: Text(_url.isNotEmpty ? _url : '就绪', style: TextStyle(fontSize: 11, color: Colors.grey[600]), overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -544,8 +672,11 @@ class _InputW extends StatefulWidget {
   final String type, placeholder, value, name;
   final _FormData? formData;
   final VoidCallback? onSubmit;
+
   const _InputW({required this.type, required this.placeholder, required this.value, required this.name, this.formData, this.onSubmit});
-  @override State<_InputW> createState() => _InputWState();
+
+  @override
+  State<_InputW> createState() => _InputWState();
 }
 
 class _InputWState extends State<_InputW> {
@@ -557,9 +688,14 @@ class _InputWState extends State<_InputW> {
     super.initState();
     _ctrl = TextEditingController(text: widget.value);
     if (widget.formData != null && widget.name.isNotEmpty) {
-      if (widget.type == 'checkbox') { _checked = widget.value.isNotEmpty; widget.formData!.values[widget.name] = _checked ? widget.value : ''; }
-      else if (widget.type == 'radio') { _checked = widget.formData!.values[widget.name] == widget.value; }
-      else { widget.formData!.values[widget.name] = widget.value; }
+      if (widget.type == 'checkbox') {
+        _checked = widget.value.isNotEmpty;
+        widget.formData!.values[widget.name] = _checked ? widget.value : '';
+      } else if (widget.type == 'radio') {
+        _checked = widget.formData!.values[widget.name] == widget.value;
+      } else {
+        widget.formData!.values[widget.name] = widget.value;
+      }
     }
     _ctrl.addListener(() {
       if (widget.formData != null && widget.name.isNotEmpty && !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) {
@@ -572,21 +708,59 @@ class _InputWState extends State<_InputW> {
   }
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final deco = InputDecoration(hintText: widget.placeholder, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)));
+    final deco = InputDecoration(
+        hintText: widget.placeholder,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)));
     switch (widget.type) {
-      case 'text': case 'search': case 'email': case 'password': case 'url': case 'tel': case 'number':
+      case 'text':
+      case 'search':
+      case 'email':
+      case 'password':
+      case 'url':
+      case 'tel':
+      case 'number':
         return SizedBox(height: 44, child: TextField(controller: _ctrl, obscureText: widget.type == 'password', decoration: deco));
       case 'submit':
-        return SizedBox(height: 44, child: ElevatedButton(onPressed: widget.onSubmit, style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), child: Text(widget.value.isNotEmpty ? widget.value : '提交')));
+        return SizedBox(
+          height: 44,
+          child: ElevatedButton(
+              onPressed: widget.onSubmit,
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+              child: Text(widget.value.isNotEmpty ? widget.value : '提交')),
+        );
       case 'checkbox':
-        return Row(children: [Checkbox(value: _checked, onChanged: (v) { setState(() => _checked = v ?? false); widget.formData?.setValue(widget.name, _checked ? widget.value : ''); }), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name)]);
+        return Row(children: [
+          Checkbox(
+              value: _checked,
+              onChanged: (v) {
+                setState(() => _checked = v ?? false);
+                widget.formData?.setValue(widget.name, _checked ? widget.value : '');
+              }),
+          Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name)
+        ]);
       case 'radio':
-        return GestureDetector(onTap: () => widget.formData?.setValue(widget.name, widget.value), child: Row(children: [Container(width: 22, height: 22, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _checked ? Colors.blue : Colors.grey, width: 2)), child: _checked ? const Center(child: CircleAvatar(radius: 6, backgroundColor: Colors.blue)) : null), const SizedBox(width: 8), Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value)]));
-      default: return SizedBox(height: 44, child: TextField(controller: _ctrl, decoration: deco));
+        return GestureDetector(
+          onTap: () => widget.formData?.setValue(widget.name, widget.value),
+          child: Row(children: [
+            Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _checked ? Colors.blue : Colors.grey, width: 2)),
+                child: _checked ? const Center(child: CircleAvatar(radius: 6, backgroundColor: Colors.blue)) : null),
+            const SizedBox(width: 8),
+            Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value)
+          ]),
+        );
+      default:
+        return SizedBox(height: 44, child: TextField(controller: _ctrl, decoration: deco));
     }
   }
 }
@@ -595,14 +769,26 @@ class _BtnW extends StatelessWidget {
   final String type, text;
   final _FormData? formData;
   final VoidCallback? onSubmit;
+
   const _BtnW({required this.type, required this.text, this.formData, this.onSubmit});
+
   @override
   Widget build(BuildContext context) {
-    final style = ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)));
+    final style = ElevatedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)));
     switch (type) {
-      case 'submit': return ElevatedButton(onPressed: onSubmit, style: style.copyWith(backgroundColor: WidgetStateProperty.all(Colors.blue), foregroundColor: WidgetStateProperty.all(Colors.white)), child: Text(text.isEmpty ? '提交' : text));
-      case 'reset': return ElevatedButton(onPressed: () => formData?.values.clear(), style: style.copyWith(backgroundColor: WidgetStateProperty.all(Colors.grey), foregroundColor: WidgetStateProperty.all(Colors.white)), child: Text(text.isEmpty ? '重置' : text));
-      default: return ElevatedButton(onPressed: () {}, style: style, child: Text(text.isEmpty ? '按钮' : text));
+      case 'submit':
+        return ElevatedButton(
+            onPressed: onSubmit,
+            style: style.copyWith(backgroundColor: WidgetStateProperty.all(Colors.blue), foregroundColor: WidgetStateProperty.all(Colors.white)),
+            child: Text(text.isEmpty ? '提交' : text));
+      case 'reset':
+        return ElevatedButton(
+            onPressed: () => formData?.values.clear(),
+            style: style.copyWith(backgroundColor: WidgetStateProperty.all(Colors.grey), foregroundColor: WidgetStateProperty.all(Colors.white)),
+            child: Text(text.isEmpty ? '重置' : text));
+      default:
+        return ElevatedButton(onPressed: () {}, style: style, child: Text(text.isEmpty ? '按钮' : text));
     }
   }
 }
@@ -611,19 +797,90 @@ class _SelW extends StatefulWidget {
   final List<MapEntry<String, String>> items;
   final String name;
   final _FormData? formData;
+
   const _SelW({required this.items, required this.name, this.formData});
-  @override State<_SelW> createState() => _SelWState();
+
+  @override
+  State<_SelW> createState() => _SelWState();
 }
 
 class _SelWState extends State<_SelW> {
   String? _val;
+
   @override
   void initState() {
     super.initState();
     if (widget.items.isNotEmpty) _val = widget.items.first.value;
     if (widget.formData != null && widget.name.isNotEmpty) widget.formData!.values[widget.name] = _val ?? '';
   }
+
   @override
   Widget build(BuildContext context) {
     return DropdownButtonFormField<String>(
-      value
+      value: _val,
+      items: widget.items
+          .map((item) => DropdownMenuItem<String>(
+                value: item.value,
+                child: Text(item.key),
+              ))
+          .toList(),
+      onChanged: (String? newValue) {
+        setState(() {
+          _val = newValue;
+          if (widget.formData != null && widget.name.isNotEmpty) {
+            widget.formData!.values[widget.name] = newValue ?? '';
+          }
+        });
+      },
+    );
+  }
+}
+
+// 补充缺失的 _TxtW 组件以解决 undefined_method 报错
+class _TxtW extends StatefulWidget {
+  final String name, placeholder, value;
+  final _FormData? formData;
+
+  const _TxtW({required this.name, required this.placeholder, required this.value, this.formData});
+
+  @override
+  State<_TxtW> createState() => _TxtWState();
+}
+
+class _TxtWState extends State<_TxtW> {
+  late TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.value);
+    if (widget.formData != null && widget.name.isNotEmpty) {
+      widget.formData!.values[widget.name] = widget.value;
+    }
+    _ctrl.addListener(() {
+      if (widget.formData != null && widget.name.isNotEmpty) {
+        widget.formData!.values[widget.name] = _ctrl.text;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _ctrl,
+      maxLines: 3,
+      decoration: InputDecoration(
+        hintText: widget.placeholder,
+        alignLabelWithHint: true,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        contentPadding: const EdgeInsets.all(12),
+      ),
+    );
+  }
+}
