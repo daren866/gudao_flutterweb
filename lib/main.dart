@@ -37,9 +37,9 @@ class JsRuntimeManager {
   static JavascriptRuntime _createRuntime() {
     final js = getJavascriptRuntime();
     
-    // 注入模拟的 DOM 对象（解决原生平台无 document 的问题）
+    // 注入增强的模拟 DOM 对象（解决原生平台 DOM API 缺失）
     js.evaluate(r'''
-      // 模拟 document 对象
+      // 模拟 document 对象（支持更多属性/方法）
       var document = {
         createElement: function(tagName) {
           return {
@@ -47,16 +47,22 @@ class JsRuntimeManager {
             style: {}, // 模拟 style 对象
             setAttribute: function(name, value) {}, // 模拟 setAttribute
             appendChild: function() {}, // 模拟 appendChild
-            textContent: '' // 模拟文本内容
+            textContent: '', // 模拟文本内容
+            innerHTML: '', // 模拟 innerHTML
+            innerText: '', // 模拟 innerText
+            className: '', // 模拟 className
+            id: '', // 模拟 id
+            addEventListener: function() {}, // 模拟事件监听
           };
         },
         body: {
-          appendChild: function() {} // 模拟 body 的 appendChild
+          appendChild: function() {}, // 模拟 body 的 appendChild
         },
-        // 其他需要的 DOM 方法...
+        // 模拟其他 DOM 方法（如 querySelector）
+        querySelector: function() { return null; },
       };
       
-      // 模拟 window 对象
+      // 模拟 window 对象（包含 document）
       var window = {
         document: document,
         console: {
@@ -202,10 +208,15 @@ class _MyHomePageState extends State<MyHomePage> {
       final result = JsRuntimeManager.runtime.evaluate(script); 
       final logs = JsRuntimeManager.getAndClearLogs(); 
       for (final log in logs) _addLog(log['level']!, log['message']!); 
-      if (result.isError) _addLog('error', 'Script Error: ${result.stringResult}'); 
+      
+      // 捕获详细错误信息（包括堆栈）
+      if (result.isError) { 
+        _addLog('error', 'Script Error: ${result.stringResult}'); 
+        _addLog('error', 'Error Stack: ${result.stackTrace ?? "无堆栈信息"}'); 
+      } 
       return ''; 
     } catch (e) { 
-      _addLog('error', '异常: $e'); 
+      _addLog('error', '执行异常: $e'); 
       return '❌'; 
     } 
   } 
@@ -234,8 +245,13 @@ class _MyHomePageState extends State<MyHomePage> {
     _addLog('info', '加载外部脚本: $fullUrl'); 
     try { 
       final res = await http.get(Uri.parse(fullUrl), headers: {'User-Agent': 'Mozilla/5.0'}).timeout(const Duration(seconds: 15)); 
-      if (res.statusCode == 200) _execScript(_fixEncoding(res)); 
-      else _addLog('error', '加载失败: HTTP ${res.statusCode}'); 
+      if (res.statusCode == 200) { 
+        // 使用 utf8 解码，避免字符错误
+        final scriptContent = utf8.decode(res.bodyBytes, allowMalformed: true); 
+        _execScript(scriptContent); 
+      } else { 
+        _addLog('error', '加载失败: HTTP ${res.statusCode}'); 
+      } 
     } catch (e) { 
       _addLog('error', '加载异常: $e'); 
     } 
