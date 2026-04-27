@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:html/dom.dart' as dom;
-import 'package:flutter_js/flutter_js.dart'; 
+import 'package:flutter_js/flutter_js.dart';
 
 void main() {
   runApp(const MyApp());
@@ -24,7 +24,7 @@ class MyApp extends StatelessWidget {
 }
 
 // ======================================================================
-// JS 运行时管理器 (注入终极浏览器沙盒环境)
+// JS 运行时管理器 (注入终极虚拟 DOM 环境)
 // ======================================================================
 class JsRuntimeManager {
   static JavascriptRuntime? _runtime;
@@ -37,113 +37,230 @@ class JsRuntimeManager {
   static JavascriptRuntime _createRuntime() {
     final js = getJavascriptRuntime();
     
-    // 1. 注入超级完整的浏览器全局模拟对象（解决原生平台无 DOM/BOM 的问题）
+    // ======================================================================
+    // 注入：超轻量级 虚拟 DOM 引擎 (让原生 JS 真正拥有 DOM 树操作能力)
+    // ======================================================================
     js.evaluate(r'''
-      var noop = function() {};
-      var FakeElement = function(tag) {
-        return {
-          tagName: (tag || '').toUpperCase(),
-          style: {},
-          setAttribute: noop,
-          getAttribute: function() { return null; },
-          removeAttribute: noop,
-          appendChild: noop,
-          removeChild: noop,
-          insertBefore: noop,
-          replaceChild: noop,
-          addEventListener: noop,
-          removeEventListener: noop,
-          dispatchEvent: function() { return true; },
-          textContent: '',
-          innerHTML: '',
-          innerText: '',
-          outerHTML: '',
-          value: '',
-          className: '',
-          id: '',
-          children: [],
-          childNodes: [],
-          parentNode: null,
-          offsetWidth: 0,
-          offsetHeight: 0,
-          getBoundingClientRect: function() { return {top:0, left:0, width:0, height:0}; },
-          focus: noop,
-          blur: noop,
-          click: noop,
-          cloneNode: function() { return this; },
-          querySelector: function() { return null; },
-          querySelectorAll: function() { return []; }
-        };
+      // --- 1. 基础节点类 ---
+      var VNode = function(type, name) {
+        this.nodeType = type;
+        this.nodeName = name;
+        this.parentNode = null;
+        this.childNodes = [];
+      };
+      VNode.prototype.appendChild = function(child) {
+        if (child.parentNode) child.parentNode.removeChild(child);
+        child.parentNode = this;
+        this.childNodes.push(child);
+        return child;
+      };
+      VNode.prototype.removeChild = function(child) {
+        var idx = this.childNodes.indexOf(child);
+        if (idx > -1) {
+          this.childNodes.splice(idx, 1);
+          child.parentNode = null;
+        }
+        return child;
+      };
+      VNode.prototype.insertBefore = function(newNode, refNode) {
+        if (refNode && refNode.parentNode === this) {
+          var idx = this.childNodes.indexOf(refNode);
+          if (idx > -1) {
+            if (newNode.parentNode) newNode.parentNode.removeChild(newNode);
+            newNode.parentNode = this;
+            this.childNodes.splice(idx, 0, newNode);
+            return newNode;
+          }
+        }
+        return this.appendChild(newNode);
+      };
+      VNode.prototype.replaceChild = function(newChild, oldChild) {
+        if (oldChild.parentNode === this) {
+          var idx = this.childNodes.indexOf(oldChild);
+          if (idx > -1) {
+            if (newChild.parentNode) newChild.parentNode.removeChild(newChild);
+            newChild.parentNode = this;
+            this.childNodes[idx] = newChild;
+            oldChild.parentNode = null;
+            return oldChild;
+          }
+        }
+        return null;
+      };
+      VNode.prototype.contains = function(node) {
+        var current = node;
+        while (current) {
+          if (current === this) return true;
+          current = current.parentNode;
+        }
+        return false;
       };
 
+      // --- 2. 元素节点类 (继承 VNode) ---
+      var VElement = function(tagName) {
+        VNode.call(this, 1, tagName.toUpperCase());
+        this.tagName = tagName.toUpperCase();
+        this.attributes = {};
+        this.style = {}; // 真实的 style 对象
+        this.id = '';
+        this.className = '';
+        this.innerHTML = '';
+        this.outerHTML = '';
+        this.value = '';
+        this.innerText = '';
+        this.textContent = '';
+        this.children = [];
+        this.hidden = false;
+        this.disabled = false;
+        this.checked = false;
+        this.type = '';
+        this.href = '';
+        this.src = '';
+      };
+      VElement.prototype = Object.create(VNode.prototype);
+      VElement.prototype.constructor = VElement;
+
+      VElement.prototype.setAttribute = function(name, value) {
+        this.attributes[name] = value;
+        if (name === 'id') this.id = value;
+        if (name === 'class') this.className = value;
+        if (name === 'style') { /* 简单忽略字符串样式注入 */ }
+      };
+      VElement.prototype.getAttribute = function(name) { return this.attributes[name] !== undefined ? this.attributes[name] : null; };
+      VElement.prototype.removeAttribute = function(name) { delete this.attributes[name]; if(name==='id') this.id=''; if(name==='class') this.className=''; };
+      
+      VElement.prototype.addEventListener = function() {};
+      VElement.prototype.removeEventListener = function() {};
+      VElement.prototype.dispatchEvent = function() { return true; };
+      VElement.prototype.focus = function() {};
+      VElement.prototype.blur = function() {};
+      VElement.prototype.click = function() {};
+      VElement.prototype.cloneNode = function() { var c = new VElement(this.tagName); c.id=this.id; c.className=this.className; return c; };
+      VElement.prototype.getBoundingClientRect = function() { return {top:0, left:0, width:0, height:0, bottom:0, right:0}; };
+      
+      // 核心：跨树查找器
+      VElement.prototype.querySelector = function(sel) {
+        sel = sel.trim();
+        if (sel.startsWith('#')) {
+          var id = sel.substring(1);
+          return this._findById(id);
+        } else {
+          var tag = sel.toUpperCase();
+          return this._findByTag(tag);
+        }
+      };
+      VElement.prototype.querySelectorAll = function(sel) {
+        var res = [];
+        var node = this.querySelector(sel);
+        while(node) { res.push(node); node = node._findNext(sel); }
+        return res;
+      };
+      VElement.prototype._findById = function(id) {
+        if (this.id === id) return this;
+        for(var i=0; i<this.childNodes.length; i++) {
+          if (this.childNodes[i].nodeType === 1) {
+            var found = this.childNodes[i]._findById(id);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      VElement.prototype._findByTag = function(tag) {
+        if (this.tagName === tag) return this;
+        for(var i=0; i<this.childNodes.length; i++) {
+          if (this.childNodes[i].nodeType === 1) {
+            var found = this.childNodes[i]._findByTag(tag);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      // --- 3. 文本节点类 ---
+      var VText = function(text) {
+        VNode.call(this, 3, '#text');
+        this.text = text;
+        this.textContent = text;
+      };
+      VText.prototype = Object.create(VNode.prototype);
+      VText.prototype.constructor = VText;
+
+      // --- 4. 构建 Document 和 Window 宿主对象 ---
+      var _documentElement = new VElement('html');
+      var _head = new VElement('head');
+      var _body = new VElement('body');
+      _documentElement.appendChild(_head);
+      _documentElement.appendChild(_body);
+
       var document = {
-        createElement: function(tag) { return new FakeElement(tag); },
-        createElementNS: function(ns, tag) { return new FakeElement(tag); },
-        createTextNode: function(text) { return { textContent: text }; },
-        getElementById: function() { return null; },
-        getElementsByClassName: function() { return []; },
-        getElementsByTagName: function() { return []; },
-        querySelector: function() { return null; },
-        querySelectorAll: function() { return []; },
-        body: new FakeElement('body'),
-        head: new FakeElement('head'),
-        documentElement: new FakeElement('html'),
+        nodeType: 9,
+        nodeName: '#document',
+        childNodes: [_documentElement],
+        documentElement: _documentElement,
+        head: _head,
+        body: _body,
         readyState: 'complete',
         cookie: '',
-        addEventListener: noop,
-        removeEventListener: noop,
-        createEvent: function() { return { initEvent: noop }; }
+        createElement: function(tag) { return new VElement(tag); },
+        createTextNode: function(text) { return new VText(text); },
+        getElementById: function(id) { return _documentElement._findById(id); },
+        getElementsByClassName: function(cls) { return []; },
+        getElementsByTagName: function(tag) { return _documentElement.querySelectorAll(tag); },
+        querySelector: function(sel) { return _documentElement.querySelector(sel); },
+        querySelectorAll: function(sel) { return _documentElement.querySelectorAll(sel); },
+        createEvent: function() { return { initEvent: function(){} }; },
+        addEventListener: function() {},
+        removeEventListener: function() {}
       };
 
       var window = {
         document: document,
-        location: { href: '', hostname: '', pathname: '/', search: '', protocol: 'https:', replace: noop, assign: noop, reload: noop },
-        navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', language: 'zh-CN', platform: 'Win32', onLine: true, appVersion: '5.0' },
-        localStorage: { getItem: function(){return null;}, setItem: noop, removeItem: noop, clear: noop, length: 0 },
-        sessionStorage: { getItem: function(){return null;}, setItem: noop, removeItem: noop, clear: noop, length: 0 },
-        addEventListener: noop,
-        removeEventListener: noop,
-        getComputedStyle: function() { return { getPropertyValue: function() { return ''; } }; },
-        setTimeout: function(fn, t) { if(typeof fn==='function') try{fn();}catch(e){} return 0; },
-        setInterval: function(fn, t) { if(typeof fn==='function') try{fn();}catch(e){} return 0; },
-        clearTimeout: noop,
-        clearInterval: noop,
+        location: { href: '', hostname: '', pathname: '/', search: '', protocol: 'https:', replace: function(){}, assign: function(){}, reload: function(){} },
+        navigator: { userAgent: 'Mozilla/5.0 (Virtual DOM)', language: 'zh-CN', platform: 'Flutter', onLine: true, appVersion: '5.0' },
+        localStorage: { getItem: function(){return null;}, setItem: function(){}, removeItem: function(){}, clear: function(){}, length: 0 },
+        sessionStorage: { getItem: function(){return null;}, setItem: function(){}, removeItem: function(){}, clear: function(){}, length: 0 },
+        addEventListener: function() {},
+        removeEventListener: function() {},
+        getComputedStyle: function(el) { return el ? el.style : {}; },
+        setTimeout: function(fn, t) { if(typeof fn==='function') try{fn();}catch(e){console.error(e);} return 0; },
+        setInterval: function(fn, t) { if(typeof fn==='function') try{fn();}catch(e){console.error(e);} return 0; },
+        clearTimeout: function() {},
+        clearInterval: function() {},
         requestAnimationFrame: function(fn) { if(typeof fn==='function') try{fn();}catch(e){} return 0; },
-        cancelAnimationFrame: noop,
-        scroll: noop,
-        scrollTo: noop,
+        cancelAnimationFrame: function() {},
+        scroll: function() {},
+        scrollTo: function() {},
         open: function() { return window; },
-        close: noop,
-        postMessage: noop,
-        fetch: function() { return Promise.resolve({ json: function(){return Promise.resolve({});}, text: function(){return Promise.resolve("");} }); },
-        alert: noop,
+        close: function() {},
+        postMessage: function() {},
+        fetch: function() { return { then: function(fn) { if(fn) fn({ json: function(){return {then:function(f){if(f)f({});}}, text: function(){return {then:function(f){if(f)f("");}}; }} }); } }; },
+        alert: function() {},
         confirm: function() { return false; },
         prompt: function() { return null; },
-        Image: function() { return new FakeElement('img'); },
-        XMLHttpRequest: function() { return { open: noop, send: noop, setRequestHeader: noop, addEventListener: noop, readyState: 4, status: 200, responseText: '', response: '' }; },
+        Image: function() { return new VElement('img'); },
+        XMLHttpRequest: function() { return { open: function(){}, send: function(){}, setRequestHeader: function(){}, addEventListener: function(){}, readyState: 4, status: 200, responseText: '', response: '' }; },
         atob: function(s) { return s; },
         btoa: function(s) { return s; },
-        innerWidth: 1920,
-        innerHeight: 1080,
-        devicePixelRatio: 1,
+        innerWidth: 1920, innerHeight: 1080, devicePixelRatio: 1,
         screen: { width: 1920, height: 1080 },
-        history: { pushState: noop, replaceState: noop, go: noop, back: noop, forward: noop },
+        history: { pushState: function(){}, replaceState: function(){}, go: function(){}, back: function(){}, forward: function(){} },
         crypto: { getRandomValues: function(arr) { for(var i=0;i<arr.length;i++) arr[i]=Math.floor(Math.random()*256); return arr; } }
       };
 
-      if (typeof Promise === 'undefined') {
-        var Promise = function(fn) { if(typeof fn === 'function') fn(function(){}, function(){}); };
-      }
+      // 全局补齐
+      if (typeof Promise === 'undefined') { var Promise = function(fn) { if(typeof fn === 'function') fn(function(){}, function(){}); }; }
       var self = window;
       var globalThis = window;
-      var Node = { ELEMENT_NODE: 1, TEXT_NODE: 3 };
+      var Node = { ELEMENT_NODE: 1, TEXT_NODE: 3, DOCUMENT_NODE: 9 };
       var navigator = window.navigator;
       var location = window.location;
       var localStorage = window.localStorage;
       var sessionStorage = window.sessionStorage;
     ''');
 
-    // 2. 注入 console 拦截 (覆盖上面的空函数，确保日志被捕获)
+    // ======================================================================
+    // 注入：Console 日志拦截（必须放在最后，以覆盖上面的空函数）
+    // ======================================================================
     js.evaluate(r'''
       var console = {
         _logs: [],
@@ -533,7 +650,6 @@ class _MyHomePageState extends State<MyHomePage> {
               ],
             ),
           ),
-          // 修复点 1：列表里的 if 绝对不能带 {}
           if (_isLoading) const Padding(
             padding: EdgeInsets.symmetric(horizontal: 16.0),
             child: LinearProgressIndicator(minHeight: 4, backgroundColor: Colors.transparent),
@@ -577,7 +693,6 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
           ),
-          // 修复点 2：列表里的 if 绝对不能带 {}
           if (_showConsole) Container(
             height: 200,
             color: const Color(0xFF1E1E1E),
@@ -655,7 +770,7 @@ class _ScriptBlockState extends State<_ScriptBlock> {
               color: const Color(0xFF21252B),
               child: Row(
                 children: [
-                  Icon(Icons.javascript, color: Colors.orange[400], size: 18),
+                  const Icon(Icons.javascript, color: Colors.orange[400], size: 18),
                   const SizedBox(width: 8),
                   Text(widget.type ?? 'text/javascript', style: TextStyle(color: Colors.grey[400]!, fontSize: 11)),
                   const Spacer(),
@@ -664,12 +779,10 @@ class _ScriptBlockState extends State<_ScriptBlock> {
               ),
             ),
           ),
-          // 修复点 3：列表里的 if 绝对不能带 {}
           if (_exp) Container(
             padding: const EdgeInsets.all(12),
             child: Text(widget.scriptContent, style: TextStyle(color: Colors.green[300]!, fontSize: 12, fontFamily: 'monospace')),
           ),
-          // 修复点 4：列表里的 if 绝对不能带 {}
           if (_exp) Container(
             padding: const EdgeInsets.all(8),
             color: const Color(0xFF21252B),
