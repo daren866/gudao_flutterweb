@@ -37,7 +37,7 @@ class JsRuntimeManager {
   static JavascriptRuntime _createRuntime() {
     final js = getJavascriptRuntime();
 
-    // 注入 console 实现（使用全局函数而非 onMessage）
+    // 注入 console 实现（使用全局函数获取日志）
     js.evaluate('''
       var console = {
         _logs: [],
@@ -49,49 +49,17 @@ class JsRuntimeManager {
           }
           console._logs.push({level: 'log', msg: args.join(' ')});
         },
-        warn: function() {
-          var args = [];
-          for (var i = 0; i < arguments.length; i++) {
-            var a = arguments[i];
-            args.push(typeof a === 'object' ? JSON.stringify(a) : String(a));
-          }
-          console._logs.push({level: 'warn', msg: args.join(' ')});
-        },
-        error: function() {
-          var args = [];
-          for (var i = 0; i < arguments.length; i++) {
-            var a = arguments[i];
-            args.push(typeof a === 'object' ? JSON.stringify(a) : String(a));
-          }
-          console._logs.push({level: 'error', msg: args.join(' ')});
-        },
-        info: function() {
-          var args = [];
-          for (var i = 0; i < arguments.length; i++) {
-            var a = arguments[i];
-            args.push(typeof a === 'object' ? JSON.stringify(a) : String(a));
-          }
-          console._logs.push({level: 'info', msg: args.join(' ')});
-        },
+        warn: function() { console.log.apply(console, arguments); console._logs[console._logs.length-1].level = 'warn'; },
+        error: function() { console.log.apply(console, arguments); console._logs[console._logs.length-1].level = 'error'; },
+        info: function() { console.log.apply(console, arguments); console._logs[console._logs.length-1].level = 'info'; },
         getLogs: function() {
           var logs = console._logs.slice();
           console._logs = [];
           return JSON.stringify(logs);
-        },
-        clearLogs: function() {
-          console._logs = [];
         }
       };
-      
-      // setTimeout 模拟（同步执行）
-      var setTimeout = function(fn, delay) {
-        if (typeof fn === 'function') fn();
-        return 0;
-      };
-      var setInterval = function(fn, delay) {
-        if (typeof fn === 'function') fn();
-        return 0;
-      };
+      var setTimeout = function(fn, delay) { if (typeof fn === 'function') fn(); return 0; };
+      var setInterval = function(fn, delay) { if (typeof fn === 'function') fn(); return 0; };
       var clearTimeout = function(id) {};
       var clearInterval = function(id) {};
     ''');
@@ -99,7 +67,6 @@ class JsRuntimeManager {
     return js;
   }
 
-  /// 获取并清除 console 日志
   static List<Map<String, String>> getAndClearLogs() {
     final logs = <Map<String, String>>[];
     try {
@@ -156,15 +123,8 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isLoading = false;
   String _currentUrl = '';
   final Map<int, _FormData> _formRegistry = {};
-
-  // JS 控制台日志列表
   final List<Map<String, String>> _consoleLogs = [];
   bool _showConsole = false;
-
-  @override
-  void initState() {
-    super.initState();
-  }
 
   @override
   void dispose() {
@@ -184,13 +144,6 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  void _clearConsole() {
-    setState(() => _consoleLogs.clear());
-  }
-
-  // ------------------------------------------------------------------
-  // 获取表单数据
-  // ------------------------------------------------------------------
   _FormData? _getFormDataForElement(dom.Element element) {
     dom.Node? node = element.parent;
     while (node != null) {
@@ -221,49 +174,29 @@ class _MyHomePageState extends State<MyHomePage> {
   String _fixEncoding(http.Response response) {
     final contentType = response.headers['content-type'] ?? '';
     if (contentType.toLowerCase().contains('charset=')) return response.body;
-    final takeLen =
-        response.bodyBytes.length > 1024 ? 1024 : response.bodyBytes.length;
+    final takeLen = response.bodyBytes.length > 1024 ? 1024 : response.bodyBytes.length;
     final previewBytes = response.bodyBytes.sublist(0, takeLen);
     final previewStr = utf8.decode(previewBytes, allowMalformed: true);
-    final charsetRegex =
-        RegExp(r'charset=([a-zA-Z0-9_-]+)', caseSensitive: false);
+    final charsetRegex = RegExp(r'charset=([a-zA-Z0-9_-]+)', caseSensitive: false);
     final match = charsetRegex.firstMatch(previewStr);
-    if (match != null &&
-        match.group(1)!.trim().toLowerCase().contains('utf')) {
+    if (match != null && match.group(1)!.trim().toLowerCase().contains('utf')) {
       return utf8.decode(response.bodyBytes, allowMalformed: true);
     }
     return response.body;
   }
 
-  // ------------------------------------------------------------------
-  // 执行 JavaScript（修复版）
-  // ------------------------------------------------------------------
   String _executeScript(String scriptContent) {
     if (scriptContent.trim().isEmpty) return '';
-
     final js = JsRuntimeManager.runtime;
-
     try {
       final result = js.evaluate(scriptContent);
-
-      // 获取 console 日志
       final logs = JsRuntimeManager.getAndClearLogs();
       for (final log in logs) {
         _addConsoleLog(log['level']!, log['message']!);
       }
-
       if (result.isError) {
-        final errorMsg = result.stringResult;
-        _addConsoleLog('error', 'Script Error: $errorMsg');
-        return '❌ $errorMsg';
+        _addConsoleLog('error', 'Script Error: ${result.stringResult}');
       }
-
-      if (result.stringResult.isNotEmpty &&
-          result.stringResult != 'undefined' &&
-          result.stringResult != 'null') {
-        _addConsoleLog('log', '返回值: ${result.stringResult}');
-      }
-
       return '';
     } catch (e) {
       _addConsoleLog('error', '执行异常: $e');
@@ -271,30 +204,19 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  // 从 HTML 中提取并执行所有 script 标签
   void _executeScriptsFromHtml(String html) {
     try {
       final document = dom.Document.html(html);
       final scripts = document.getElementsByTagName('script');
-
       for (final script in scripts) {
         final src = script.attributes['src'];
         final type = script.attributes['type']?.toLowerCase();
-
-        // 跳过非 JavaScript 类型
-        if (type != null &&
-            type != 'text/javascript' &&
-            type != 'application/javascript' &&
-            type != 'module' &&
-            type != '') {
+        if (type != null && type != 'text/javascript' && type != 'application/javascript' && type != 'module' && type != '') {
           continue;
         }
-
         if (src != null) {
-          // 外部脚本 - 异步加载
           _loadExternalScript(src);
         } else {
-          // 内联脚本
           final content = script.text;
           if (content.trim().isNotEmpty) {
             _addConsoleLog('info', '执行内联脚本...');
@@ -307,23 +229,15 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  // 加载外部脚本
   Future<void> _loadExternalScript(String src) async {
     final fullUrl = _resolveUrl(src);
     _addConsoleLog('info', '加载外部脚本: $fullUrl');
-
     try {
-      final response = await http.get(
-        Uri.parse(fullUrl),
-        headers: {
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-      ).timeout(const Duration(seconds: 15));
-
+      final response = await http.get(Uri.parse(fullUrl), headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
-        final content = _fixEncoding(response);
-        _executeScript(content);
+        _executeScript(_fixEncoding(response));
       } else {
         _addConsoleLog('error', '加载脚本失败: HTTP ${response.statusCode}');
       }
@@ -343,21 +257,17 @@ class _MyHomePageState extends State<MyHomePage> {
     });
     try {
       final response = await http.get(Uri.parse(fullUrl), headers: {
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }).timeout(const Duration(seconds: 10));
-
       if (response.statusCode == 200) {
         final html = _fixEncoding(response);
         setState(() => _htmlContent = html);
         _executeScriptsFromHtml(html);
       } else {
-        setState(
-            () => _htmlContent = '<p style="color:red">请求失败: ${response.statusCode}</p>');
+        setState(() => _htmlContent = '<p style="color:red">请求失败: ${response.statusCode}</p>');
       }
     } catch (e) {
-      setState(
-          () => _htmlContent = '<p style="color:red">请求出错: $e</p>');
+      setState(() => _htmlContent = '<p style="color:red">请求出错: $e</p>');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -369,24 +279,18 @@ class _MyHomePageState extends State<MyHomePage> {
     if (fullUrl.isEmpty) return;
     setState(() => _isLoading = true);
     try {
-      final data = Map.fromEntries(
-          formData.values.entries.where((e) => e.key.isNotEmpty));
+      final data = Map.fromEntries(formData.values.entries.where((e) => e.key.isNotEmpty));
       http.Response response;
       if (formData.method == 'post') {
         response = await http.post(Uri.parse(fullUrl), headers: {
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Content-Type': 'application/x-www-form-urlencoded',
         }, body: data).timeout(const Duration(seconds: 10));
       } else {
-        final queryString = data.entries
-            .map((e) =>
-                '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
-            .join('&');
+        final queryString = data.entries.map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}').join('&');
         final url = queryString.isNotEmpty ? '$fullUrl?$queryString' : fullUrl;
         response = await http.get(Uri.parse(url), headers: {
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }).timeout(const Duration(seconds: 10));
       }
       setState(() {
@@ -397,15 +301,11 @@ class _MyHomePageState extends State<MyHomePage> {
           _htmlContent = html;
           _executeScriptsFromHtml(html);
         } else {
-          _htmlContent =
-              '<p style="color:red">提交返回状态码: ${response.statusCode}</p>';
+          _htmlContent = '<p style="color:red">提交返回状态码: ${response.statusCode}</p>';
         }
       });
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('表单提交出错: $e')));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('表单提交出错: $e')));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -418,14 +318,10 @@ class _MyHomePageState extends State<MyHomePage> {
     final placeholder = element.attributes['placeholder'] ?? '';
     final formData = _getFormDataForElement(element);
     final onclick = element.attributes['onclick'];
-
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: _InputWrapper(
-        type: type,
-        placeholder: placeholder,
-        value: value,
-        name: name,
+        type: type, placeholder: placeholder, value: value, name: name,
         formData: formData,
         onSubmit: formData != null ? () => _submitForm(formData) : null,
         onclick: onclick,
@@ -438,13 +334,10 @@ class _MyHomePageState extends State<MyHomePage> {
     final text = element.innerHtml;
     final formData = _getFormDataForElement(element);
     final onclick = element.attributes['onclick'];
-
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: _FormButtonWrapper(
-        type: type,
-        text: text,
-        formData: formData,
+        type: type, text: text, formData: formData,
         onSubmit: formData != null ? () => _submitForm(formData) : null,
         onclick: onclick,
       ),
@@ -461,15 +354,9 @@ class _MyHomePageState extends State<MyHomePage> {
       final val = opt.attributes['value'] ?? label;
       return MapEntry(label, val);
     }).toList();
-
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: _SelectWrapper(
-        items: items,
-        name: name,
-        formData: formData,
-        onchange: onchange,
-      ),
+      child: _SelectWrapper(items: items, name: name, formData: formData, onchange: onchange),
     );
   }
 
@@ -479,26 +366,17 @@ class _MyHomePageState extends State<MyHomePage> {
     final value = element.text.trim();
     final formData = _getFormDataForElement(element);
     final oninput = element.attributes['oninput'];
-
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: _TextareaWrapper(
-        name: name,
-        placeholder: placeholder,
-        value: value,
-        formData: formData,
-        oninput: oninput,
-      ),
+      child: _TextareaWrapper(name: name, placeholder: placeholder, value: value, formData: formData, oninput: oninput),
     );
   }
 
-  // 构建 Script 标签
   Widget? _buildHtmlScript(dom.Element element) {
     final src = element.attributes['src'];
     final type = element.attributes['type'];
     final content = element.text.trim();
 
-    // 外部脚本
     if (src != null && content.isEmpty) {
       return Container(
         margin: const EdgeInsets.symmetric(vertical: 8),
@@ -513,17 +391,13 @@ class _MyHomePageState extends State<MyHomePage> {
             Icon(Icons.javascript, color: Colors.orange[700], size: 20),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                '外部脚本: $src',
-                style: TextStyle(color: Colors.orange[700], fontSize: 12),
-              ),
+              child: Text('外部脚本: $src', style: TextStyle(color: Colors.orange[700], fontSize: 12)),
             ),
           ],
         ),
       );
     }
 
-    // 内联脚本
     if (content.isNotEmpty) {
       return _ScriptBlockWidget(
         scriptContent: content,
@@ -531,11 +405,9 @@ class _MyHomePageState extends State<MyHomePage> {
         onExecute: () => _executeScript(content),
       );
     }
-
     return const SizedBox.shrink();
   }
 
-  // 控制台面板
   Widget _buildConsolePanel() {
     return Container(
       height: 200,
@@ -550,19 +422,13 @@ class _MyHomePageState extends State<MyHomePage> {
             color: const Color(0xFF2D2D2D),
             child: Row(
               children: [
-                const Text('控制台',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold)),
+                const Text('控制台', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                 const Spacer(),
-                Text('${_consoleLogs.length} 条日志',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 11)),
+                Text('${_consoleLogs.length} 条日志', style: TextStyle(color: Colors.grey[400]!, fontSize: 11)),
                 const SizedBox(width: 16),
                 InkWell(
-                  onTap: _clearConsole,
-                  child:
-                      const Icon(Icons.clear_all, color: Colors.grey, size: 16),
+                  onTap: () => setState(() => _consoleLogs.clear()),
+                  child: const Icon(Icons.clear_all, color: Colors.grey, size: 16),
                 ),
                 const SizedBox(width: 8),
                 InkWell(
@@ -574,10 +440,8 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
           Expanded(
             child: _consoleLogs.isEmpty
-                ? const Center(
-                    child: Text('暂无日志输出',
-                        style:
-                            TextStyle(color: Colors.grey[600], fontSize: 12)),
+                ? Center(
+                    child: Text('暂无日志输出', style: TextStyle(color: Colors.grey[600]!, fontSize: 12)),
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.all(8),
@@ -591,25 +455,14 @@ class _MyHomePageState extends State<MyHomePage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text('[${log['time']}] ',
-                                style: const TextStyle(
-                                    color: Colors.grey500,
-                                    fontSize: 10,
-                                    fontFamily: 'monospace')),
+                                style: TextStyle(color: Colors.grey[500]!, fontSize: 10, fontFamily: 'monospace')),
                             Container(
-                              width: 6,
-                              height: 6,
+                              width: 6, height: 6,
                               margin: const EdgeInsets.only(top: 5, right: 6),
-                              decoration:
-                                  BoxDecoration(color: color, shape: BoxShape.circle),
+                              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
                             ),
                             Expanded(
-                              child: Text(
-                                log['message']!,
-                                style: TextStyle(
-                                    color: color,
-                                    fontSize: 11,
-                                    fontFamily: 'monospace'),
-                              ),
+                              child: Text(log['message']!, style: TextStyle(color: color, fontSize: 11, fontFamily: 'monospace')),
                             ),
                           ],
                         ),
@@ -624,14 +477,10 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Color _getLogColor(String level) {
     switch (level) {
-      case 'error':
-        return Colors.red[400]!;
-      case 'warn':
-        return Colors.yellow[400]!;
-      case 'info':
-        return Colors.blue[400]!;
-      default:
-        return Colors.white70;
+      case 'error': return Colors.red[400]!;
+      case 'warn': return Colors.yellow[400]!;
+      case 'info': return Colors.blue[400]!;
+      default: return Colors.white70;
     }
   }
 
@@ -675,39 +524,26 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: _isLoading
-                      ? null
-                      : () => _fetchWebContent(_urlController.text),
+                  onPressed: _isLoading ? null : () => _fetchWebContent(_urlController.text),
                   child: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Text('访问'),
                 ),
               ],
             ),
           ),
-          if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16.0),
-              child: LinearProgressIndicator(
-                  minHeight: 4, backgroundColor: Colors.transparent),
-            ),
+          if (_isLoading) const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16.0),
+            child: LinearProgressIndicator(minHeight: 4, backgroundColor: Colors.transparent),
+          ),
           Expanded(
             child: Container(
-              decoration: BoxDecoration(
-                  border: Border.all(
-                      width: 2, color: Theme.of(context).dividerColor)),
+              decoration: BoxDecoration(border: Border.all(width: 2, color: Theme.of(context).dividerColor)),
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(16.0),
                 child: HtmlWidget(
                   _htmlContent,
-                  onTapUrl: (url) {
-                    _fetchWebContent(url);
-                    return true;
-                  },
+                  onTapUrl: (url) { _fetchWebContent(url); return true; },
                   customWidgetBuilder: (element) {
                     final tag = element.localName;
                     if (tag == 'input') return _buildHtmlInput(element);
@@ -719,8 +555,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     return null;
                   },
                   textStyle: const TextStyle(fontSize: 16),
-                  customStylesBuilder: (element) =>
-                      {'margin': '0', 'padding': '0'},
+                  customStylesBuilder: (element) => {'margin': '0', 'padding': '0'},
                 ),
               ),
             ),
@@ -729,18 +564,12 @@ class _MyHomePageState extends State<MyHomePage> {
           SafeArea(
             child: Container(
               width: double.infinity,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               color: Colors.grey[300],
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      '当前 URL: $_currentUrl',
-                      style:
-                          const TextStyle(fontSize: 12, color: Colors.black54),
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    child: Text('当前 URL: $_currentUrl', style: const TextStyle(fontSize: 12, color: Colors.black54), overflow: TextOverflow.ellipsis),
                   ),
                   if (_consoleLogs.isNotEmpty && !_showConsole)
                     InkWell(
@@ -748,17 +577,9 @@ class _MyHomePageState extends State<MyHomePage> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.error_outline,
-                            color: _consoleLogs.any((l) => l['level'] == 'error')
-                                ? Colors.red
-                                : Colors.orange,
-                            size: 14,
-                          ),
+                          Icon(Icons.error_outline, color: _consoleLogs.any((l) => l['level'] == 'error') ? Colors.red : Colors.orange, size: 14),
                           const SizedBox(width: 4),
-                          Text('${_consoleLogs.length}',
-                              style: const TextStyle(
-                                  fontSize: 11, color: Colors.black54)),
+                          Text('${_consoleLogs.length}', style: const TextStyle(fontSize: 11, color: Colors.black54)),
                         ],
                       ),
                     ),
@@ -773,7 +594,7 @@ class _MyHomePageState extends State<MyHomePage> {
 }
 
 // ======================================================================
-// Script 代码块组件（修复 const 问题）
+// Script 代码块组件
 // ======================================================================
 class _ScriptBlockWidget extends StatefulWidget {
   final String scriptContent;
@@ -796,7 +617,6 @@ class _ScriptBlockWidgetState extends State<_ScriptBlockWidget> {
   @override
   Widget build(BuildContext context) {
     final borderRadius = BorderRadius.circular(8);
-    
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
@@ -807,7 +627,6 @@ class _ScriptBlockWidgetState extends State<_ScriptBlockWidget> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 标题栏
           InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
             child: Container(
@@ -827,26 +646,19 @@ class _ScriptBlockWidgetState extends State<_ScriptBlockWidget> {
                   const SizedBox(width: 8),
                   Text(
                     widget.type ?? 'text/javascript',
-                    style: const TextStyle(
-                        color: Colors.grey400,
-                        fontSize: 11,
-                        fontFamily: 'monospace'),
+                    style: TextStyle(color: Colors.grey[400]!, fontSize: 11, fontFamily: 'monospace'),
                   ),
                   const Spacer(),
                   Text(
                     '${widget.scriptContent.split('\n').length} 行',
-                    style: const TextStyle(color: Colors.grey500, fontSize: 10),
+                    style: TextStyle(color: Colors.grey[500]!, fontSize: 10),
                   ),
                   const SizedBox(width: 8),
-                  Icon(
-                      _expanded ? Icons.expand_less : Icons.expand_more,
-                      color: Colors.grey[400],
-                      size: 18),
+                  Icon(_expanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey[400]!, size: 18),
                 ],
               ),
             ),
           ),
-          // 代码内容
           if (_expanded)
             Container(
               padding: const EdgeInsets.all(12),
@@ -854,15 +666,10 @@ class _ScriptBlockWidgetState extends State<_ScriptBlockWidget> {
                 scrollDirection: Axis.horizontal,
                 child: Text(
                   widget.scriptContent,
-                  style: TextStyle(
-                    color: Colors.green[300],
-                    fontSize: 12,
-                    fontFamily: 'monospace',
-                  ),
+                  style: TextStyle(color: Colors.green[300], fontSize: 12, fontFamily: 'monospace'),
                 ),
               ),
             ),
-          // 操作栏
           if (_expanded)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -904,13 +711,8 @@ class _InputWrapper extends StatefulWidget {
   final String? onclick;
 
   const _InputWrapper({
-    required this.type,
-    required this.placeholder,
-    required this.value,
-    required this.name,
-    this.formData,
-    this.onSubmit,
-    this.onclick,
+    required this.type, required this.placeholder, required this.value, required this.name,
+    this.formData, this.onSubmit, this.onclick,
   });
 
   @override
@@ -940,18 +742,14 @@ class _InputWrapperState extends State<_InputWrapper> {
   }
 
   void _onTextChanged() {
-    if (widget.formData != null &&
-        widget.name.isNotEmpty &&
-        !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden']
-            .contains(widget.type)) {
+    if (widget.formData != null && widget.name.isNotEmpty && !['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden'].contains(widget.type)) {
       widget.formData!.values[widget.name] = _controller.text;
     }
   }
 
   void _onFormChanged() {
     if (widget.type == 'radio' && widget.formData != null && mounted) {
-      setState(
-          () => _isChecked = widget.formData!.values[widget.name] == widget.value);
+      setState(() => _isChecked = widget.formData!.values[widget.name] == widget.value);
     }
   }
 
@@ -960,14 +758,9 @@ class _InputWrapperState extends State<_InputWrapper> {
       JsRuntimeManager.runtime.evaluate(widget.onclick!);
       final logs = JsRuntimeManager.getAndClearLogs();
       for (final log in logs) {
-        _addLogToConsole(log);
+        // 简单回显，实际可通过回调传递
       }
     }
-  }
-
-  void _addLogToConsole(Map<String, String> log) {
-    // 这里需要通过其他方式传递日志到父组件
-    // 简化处理：直接使用 JS 运行时
   }
 
   @override
@@ -994,8 +787,7 @@ class _InputWrapperState extends State<_InputWrapper> {
           obscureText: widget.type == 'password',
           decoration: InputDecoration(
             hintText: widget.placeholder,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),
           ),
         );
@@ -1005,17 +797,13 @@ class _InputWrapperState extends State<_InputWrapper> {
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Checkbox(
-              value: _isChecked,
-              onChanged: (val) {
-                setState(() => _isChecked = val ?? false);
-                if (widget.formData != null && widget.name.isNotEmpty) {
-                  widget.formData!
-                      .setValue(widget.name, _isChecked ? widget.value : '');
-                }
-                _handleOnclick();
-              },
-            ),
+            Checkbox(value: _isChecked, onChanged: (val) {
+              setState(() => _isChecked = val ?? false);
+              if (widget.formData != null && widget.name.isNotEmpty) {
+                widget.formData!.setValue(widget.name, _isChecked ? widget.value : '');
+              }
+              _handleOnclick();
+            }),
             Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.name),
           ],
         );
@@ -1033,21 +821,9 @@ class _InputWrapperState extends State<_InputWrapper> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 20,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color: _isChecked ? Colors.blue : Colors.grey, width: 2),
-                  ),
-                  child: _isChecked
-                      ? Center(
-                          child: Container(
-                              width: 10,
-                              height: 10,
-                              decoration: const BoxDecoration(
-                                  shape: BoxShape.circle, color: Colors.blue)))
-                      : null,
+                  width: 20, height: 20,
+                  decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _isChecked ? Colors.blue : Colors.grey, width: 2)),
+                  child: _isChecked ? Center(child: Container(width: 10, height: 10, decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.blue))) : null,
                 ),
                 const SizedBox(width: 8),
                 Text(widget.placeholder.isNotEmpty ? widget.placeholder : widget.value),
@@ -1057,38 +833,22 @@ class _InputWrapperState extends State<_InputWrapper> {
         );
       case 'submit':
         return ElevatedButton(
-          onPressed: () {
-            _handleOnclick();
-            widget.onSubmit?.call();
-          },
-          style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).primaryColor,
-              foregroundColor: Colors.white),
+          onPressed: () { _handleOnclick(); widget.onSubmit?.call(); },
+          style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white),
           child: Text(widget.value.isNotEmpty ? widget.value : 'Submit'),
         );
       case 'reset':
         return ElevatedButton(
-          onPressed: () {
-            widget.formData?.values.clear();
-            _controller.clear();
-            setState(() => _isChecked = false);
-            _handleOnclick();
-          },
-          style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.grey, foregroundColor: Colors.white),
+          onPressed: () { widget.formData?.values.clear(); _controller.clear(); setState(() => _isChecked = false); _handleOnclick(); },
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white),
           child: Text(widget.value.isNotEmpty ? widget.value : 'Reset'),
         );
       case 'button':
       default:
         return ElevatedButton(
           onPressed: _handleOnclick,
-          style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black87,
-              side: const BorderSide(color: Colors.grey)),
-          child: Text(widget.value.isNotEmpty
-              ? widget.value
-              : (widget.type.toUpperCase())),
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, side: const BorderSide(color: Colors.grey)),
+          child: Text(widget.value.isNotEmpty ? widget.value : (widget.type.toUpperCase())),
         );
     }
   }
@@ -1104,13 +864,7 @@ class _FormButtonWrapper extends StatelessWidget {
   final VoidCallback? onSubmit;
   final String? onclick;
 
-  const _FormButtonWrapper({
-    required this.type,
-    required this.text,
-    this.formData,
-    this.onSubmit,
-    this.onclick,
-  });
+  const _FormButtonWrapper({required this.type, required this.text, this.formData, this.onSubmit, this.onclick});
 
   void _handleOnclick() {
     if (onclick != null && onclick!.isNotEmpty) {
@@ -1122,33 +876,21 @@ class _FormButtonWrapper extends StatelessWidget {
   Widget build(BuildContext context) {
     if (type == 'submit') {
       return ElevatedButton(
-        onPressed: () {
-          _handleOnclick();
-          onSubmit?.call();
-        },
-        style: ElevatedButton.styleFrom(
-            backgroundColor: Theme.of(context).primaryColor,
-            foregroundColor: Colors.white),
+        onPressed: () { _handleOnclick(); onSubmit?.call(); },
+        style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white),
         child: Text(text.isEmpty ? 'Submit' : text),
       );
     }
     if (type == 'reset') {
       return ElevatedButton(
-        onPressed: () {
-          formData?.values.clear();
-          _handleOnclick();
-        },
-        style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.grey, foregroundColor: Colors.white),
+        onPressed: () { formData?.values.clear(); _handleOnclick(); },
+        style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white),
         child: Text(text.isEmpty ? 'Reset' : text),
       );
     }
     return ElevatedButton(
       onPressed: _handleOnclick,
-      style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black87,
-          side: const BorderSide(color: Colors.grey)),
+      style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, side: const BorderSide(color: Colors.grey)),
       child: Text(text.isEmpty ? 'Button' : text),
     );
   }
@@ -1163,12 +905,7 @@ class _SelectWrapper extends StatefulWidget {
   final _FormData? formData;
   final String? onchange;
 
-  const _SelectWrapper({
-    required this.items,
-    required this.name,
-    this.formData,
-    this.onchange,
-  });
+  const _SelectWrapper({required this.items, required this.name, this.formData, this.onchange});
 
   @override
   State<_SelectWrapper> createState() => _SelectWrapperState();
@@ -1199,15 +936,12 @@ class _SelectWrapperState extends State<_SelectWrapper> {
   @override
   Widget build(BuildContext context) {
     return DropdownButtonFormField<String>(
-      initialValue:
-          widget.items.any((e) => e.value == _selectedValue) ? _selectedValue : null,
+      initialValue: widget.items.any((e) => e.value == _selectedValue) ? _selectedValue : null,
       decoration: const InputDecoration(
         border: OutlineInputBorder(),
         contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       ),
-      items: widget.items
-          .map((item) => DropdownMenuItem<String>(value: item.value, child: Text(item.key)))
-          .toList(),
+      items: widget.items.map((item) => DropdownMenuItem<String>(value: item.value, child: Text(item.key))).toList(),
       onChanged: (val) {
         setState(() => _selectedValue = val);
         if (widget.formData != null && widget.name.isNotEmpty) {
@@ -1229,13 +963,7 @@ class _TextareaWrapper extends StatefulWidget {
   final _FormData? formData;
   final String? oninput;
 
-  const _TextareaWrapper({
-    required this.name,
-    required this.placeholder,
-    required this.value,
-    this.formData,
-    this.oninput,
-  });
+  const _TextareaWrapper({required this.name, required this.placeholder, required this.value, this.formData, this.oninput});
 
   @override
   State<_TextareaWrapper> createState() => _TextareaWrapperState();
@@ -1275,8 +1003,7 @@ class _TextareaWrapperState extends State<_TextareaWrapper> {
     return TextField(
       controller: _controller,
       maxLines: 4,
-      decoration:
-          InputDecoration(hintText: widget.placeholder, border: const OutlineInputBorder()),
+      decoration: InputDecoration(hintText: widget.placeholder, border: const OutlineInputBorder()),
     );
   }
 }
