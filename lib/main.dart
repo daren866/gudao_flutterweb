@@ -24,7 +24,7 @@ class MyApp extends StatelessWidget {
 }
 
 // ======================================================================
-// JS 运行时管理器（修复版）
+// JS 运行时管理器
 // ======================================================================
 class JsRuntimeManager {
   static JavascriptRuntime? _runtime;
@@ -36,8 +36,6 @@ class JsRuntimeManager {
 
   static JavascriptRuntime _createRuntime() {
     final js = getJavascriptRuntime();
-
-    // 注入 console 实现（使用全局函数获取日志）
     js.evaluate('''
       var console = {
         _logs: [],
@@ -63,7 +61,6 @@ class JsRuntimeManager {
       var clearTimeout = function(id) {};
       var clearInterval = function(id) {};
     ''');
-
     return js;
   }
 
@@ -118,8 +115,7 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final TextEditingController _urlController = TextEditingController();
-  String _htmlContent =
-      '<h2>欢迎使用</h2><p>支持 form 提交、input / button / select / textarea，以及 script 标签执行。</p>';
+  String _htmlContent = '<h2>欢迎使用</h2><p>支持 form 提交、input / button / select / textarea，以及 script 标签执行。</p>';
   bool _isLoading = false;
   String _currentUrl = '';
   final Map<int, _FormData> _formRegistry = {};
@@ -616,12 +612,11 @@ class _ScriptBlockWidgetState extends State<_ScriptBlockWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final borderRadius = BorderRadius.circular(8);
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
         color: const Color(0xFF282C34),
-        borderRadius: borderRadius,
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.orange[300]!),
       ),
       child: Column(
@@ -756,10 +751,6 @@ class _InputWrapperState extends State<_InputWrapper> {
   void _handleOnclick() {
     if (widget.onclick != null && widget.onclick!.isNotEmpty) {
       JsRuntimeManager.runtime.evaluate(widget.onclick!);
-      final logs = JsRuntimeManager.getAndClearLogs();
-      for (final log in logs) {
-        // 简单回显，实际可通过回调传递
-      }
     }
   }
 
