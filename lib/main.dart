@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:html/dom.dart' as dom;
-// 如果你要用 flutter_js_pro，把这行换成 import 'package:flutter_js_pro/js.dart';
 import 'package:flutter_js/flutter_js.dart'; 
 
 void main() {
@@ -36,7 +35,6 @@ class JsRuntimeManager {
   }
 
   static JavascriptRuntime _createRuntime() {
-    // 如果使用 flutter_js_pro，将 getJavascriptRuntime() 换成 JsPlus()
     final js = getJavascriptRuntime();
     
     // 1. 注入超级完整的浏览器全局模拟对象（解决原生平台无 DOM/BOM 的问题）
@@ -288,7 +286,6 @@ class _MyHomePageState extends State<MyHomePage> {
       for (final log in logs) {
         _addLog(log['level']!, log['message']!);
       }
-      // 修复：彻底移除 stackTrace
       if (result.isError) {
         _addLog('error', 'Script Error: ${result.stringResult}');
       }
@@ -326,7 +323,6 @@ class _MyHomePageState extends State<MyHomePage> {
     try {
       final res = await http.get(Uri.parse(fullUrl), headers: {'User-Agent': 'Mozilla/5.0'}).timeout(const Duration(seconds: 15));
       if (res.statusCode == 200) {
-        // 强化：强制 utf8 解码，允许残缺字符，解决特殊字符引起的脚本崩溃错误
         final scriptContent = utf8.decode(res.bodyBytes, allowMalformed: true);
         _execScript(scriptContent);
       } else {
@@ -537,12 +533,11 @@ class _MyHomePageState extends State<MyHomePage> {
               ],
             ),
           ),
-          if (_isLoading) {
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16.0),
-              child: LinearProgressIndicator(minHeight: 4, backgroundColor: Colors.transparent),
-            )
-          },
+          // 修复点 1：列表里的 if 绝对不能带 {}
+          if (_isLoading) const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16.0),
+            child: LinearProgressIndicator(minHeight: 4, backgroundColor: Colors.transparent),
+          ),
           Expanded(
             child: Container(
               decoration: BoxDecoration(border: Border.all(width: 2, color: Theme.of(context).dividerColor)),
@@ -582,42 +577,41 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
           ),
-          if (_showConsole) {
-            Container(
-              height: 200,
-              color: const Color(0xFF1E1E1E),
-              child: Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    color: const Color(0xFF2D2D2D),
-                    child: Row(
-                      children: [
-                        const Text('控制台', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                        const Spacer(),
-                        Text('${_consoleLogs.length} 条', style: TextStyle(color: Colors.grey[400]!, fontSize: 11)),
-                        InkWell(onTap: () => setState(() => _consoleLogs.clear()), child: const Icon(Icons.clear_all, color: Colors.grey, size: 16)),
-                        InkWell(onTap: () => setState(() => _showConsole = false), child: const Icon(Icons.close, color: Colors.grey, size: 16))
-                      ],
-                    ),
+          // 修复点 2：列表里的 if 绝对不能带 {}
+          if (_showConsole) Container(
+            height: 200,
+            color: const Color(0xFF1E1E1E),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  color: const Color(0xFF2D2D2D),
+                  child: Row(
+                    children: [
+                      const Text('控制台', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                      const Spacer(),
+                      Text('${_consoleLogs.length} 条', style: TextStyle(color: Colors.grey[400]!, fontSize: 11)),
+                      InkWell(onTap: () => setState(() => _consoleLogs.clear()), child: const Icon(Icons.clear_all, color: Colors.grey, size: 16)),
+                      InkWell(onTap: () => setState(() => _showConsole = false), child: const Icon(Icons.close, color: Colors.grey, size: 16))
+                    ],
                   ),
-                  Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.all(8),
-                      itemCount: _consoleLogs.length,
-                      itemBuilder: (c, i) {
-                        final log = _consoleLogs[i];
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: Text('[${log['time']}] ${log['message']}', style: TextStyle(color: _getColor(log['level']!), fontSize: 11, fontFamily: 'monospace')),
-                        );
-                      },
-                    ),
-                  )
-                ],
-              ),
-            )
-          },
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(8),
+                    itemCount: _consoleLogs.length,
+                    itemBuilder: (c, i) {
+                      final log = _consoleLogs[i];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Text('[${log['time']}] ${log['message']}', style: TextStyle(color: _getColor(log['level']!), fontSize: 11, fontFamily: 'monospace')),
+                      );
+                    },
+                  ),
+                )
+              ],
+            ),
+          ),
           SafeArea(
             child: Container(
               width: double.infinity,
@@ -670,29 +664,27 @@ class _ScriptBlockState extends State<_ScriptBlock> {
               ),
             ),
           ),
-          if (_exp) {
-            Container(
-              padding: const EdgeInsets.all(12),
-              child: Text(widget.scriptContent, style: TextStyle(color: Colors.green[300]!, fontSize: 12, fontFamily: 'monospace')),
-            )
-          },
-          if (_exp) {
-            Container(
-              padding: const EdgeInsets.all(8),
-              color: const Color(0xFF21252B),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton.icon(
-                    onPressed: widget.onExecute,
-                    icon: const Icon(Icons.play_arrow, size: 16),
-                    label: const Text('执行'),
-                    style: TextButton.styleFrom(foregroundColor: Colors.green[400]),
-                  )
-                ],
-              ),
-            )
-          }
+          // 修复点 3：列表里的 if 绝对不能带 {}
+          if (_exp) Container(
+            padding: const EdgeInsets.all(12),
+            child: Text(widget.scriptContent, style: TextStyle(color: Colors.green[300]!, fontSize: 12, fontFamily: 'monospace')),
+          ),
+          // 修复点 4：列表里的 if 绝对不能带 {}
+          if (_exp) Container(
+            padding: const EdgeInsets.all(8),
+            color: const Color(0xFF21252B),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  onPressed: widget.onExecute,
+                  icon: const Icon(Icons.play_arrow, size: 16),
+                  label: const Text('执行'),
+                  style: TextButton.styleFrom(foregroundColor: Colors.green[400]),
+                )
+              ],
+            ),
+          )
         ],
       ),
     );
