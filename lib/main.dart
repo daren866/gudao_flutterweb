@@ -207,12 +207,13 @@ class _MyHomePageState extends State<MyHomePage> {
     try { 
       final result = JsRuntimeManager.runtime.evaluate(script); 
       final logs = JsRuntimeManager.getAndClearLogs(); 
-      for (final log in logs) _addLog(log['level']!, log['message']!); 
+      for (final log in logs) { 
+        _addLog(log['level']!, log['message']!); 
+      } 
       
-      // 捕获详细错误信息（包括堆栈）
+      // 修复：去掉 stackTrace（JsEvalResult 无此属性）
       if (result.isError) { 
         _addLog('error', 'Script Error: ${result.stringResult}'); 
-        _addLog('error', 'Error Stack: ${result.stackTrace ?? "无堆栈信息"}'); 
       } 
       return ''; 
     } catch (e) { 
@@ -260,7 +261,12 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _fetchWebContent(String url) async { 
     if (url.isEmpty) return; 
     final fullUrl = _resolveUrl(url); 
-    setState(() { _isLoading = true; _currentUrl = fullUrl; _urlController.text = fullUrl; _formRegistry.clear(); }); 
+    setState(() { 
+      _isLoading = true; 
+      _currentUrl = fullUrl; 
+      _urlController.text = fullUrl; 
+      _formRegistry.clear(); 
+    }); 
     try { 
       final response = await http.get(Uri.parse(fullUrl), headers: {'User-Agent': 'Mozilla/5.0'}).timeout(const Duration(seconds: 10)); 
       if (response.statusCode == 200) { 
